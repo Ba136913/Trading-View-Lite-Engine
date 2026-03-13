@@ -8,6 +8,7 @@ from cachetools import TTLCache
 import uvicorn
 import os
 import datetime
+import math
 
 app = FastAPI()
 
@@ -73,8 +74,8 @@ def run_swing_scanner():
 def get_ai_prediction(symbol, current_price):
     if not ai_model: return "⚠️ AI prediction disabled. API Key not found."
     prompt = f"""
-    Act as a Hedge Fund Quant. Analyze daily chart for {symbol} (NSE). Price: ₹{current_price}.
-    Give a sharp, 3-sentence institutional trading prediction. Focus on immediate trend, momentum, and next support/resistance based on price action.
+    Act as a Hedge Fund Quant. Analyze 5-min Intraday chart for {symbol} (NSE). Current Price: ₹{current_price}.
+    Give a sharp, 3-sentence intraday momentum prediction based on current price action.
     """
     try: return ai_model.generate_content(prompt).text.replace("*", "")
     except: return "⚠️ AI Engine currently busy."
@@ -82,29 +83,39 @@ def get_ai_prediction(symbol, current_price):
 @app.get("/api/analyze/{symbol}")
 def analyze_stock(symbol: str):
     yf_symbol = symbol.upper().replace(" ", "").replace(".NS", "") + ".NS"
-    cache_key = f"analyze_{yf_symbol}"
+    cache_key = f"analyze_5m_{yf_symbol}"
     
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
 
     try:
-        df = yf.download(yf_symbol, period="1y", interval="1d", progress=False)
+        # 🔥 FIX: 5-Minute Timeframe Data
+        df = yf.download(yf_symbol, period="5d", interval="5m", progress=False)
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
 
         if df.empty or len(df) < 50: 
-            return {"status": "error", "message": f"Data not found for {symbol}. Try valid F&O symbol."}
+            return {"status": "error", "message": f"Intraday Data not found for {symbol}."}
             
         df = df.ffill().bfill()
         
-        # 🔥 SAFELY Calculate SuperTrend
+        # SuperTrend on 5-min
         df.ta.supertrend(length=10, multiplier=3, append=True)
         df.ta.supertrend(length=10, multiplier=1, append=True)
-        df = df.fillna(0)
         
-        # Daily Pivots
-        prev = df.iloc[-2]
-        p = (prev['High'] + prev['Low'] + prev['Close']) / 3
-        r1 = (2 * p) - prev['Low']
-        s1 = (2 * p) - prev['High']
+        # 🔥 FIX: Real Step-like Pivot Points (Calculated per day)
+        daily_data = df.groupby(df.index.date).agg({'High': 'max', 'Low': 'min', 'Close': 'last'})
+        daily_data['P'] = (daily_data['High'].shift(1) + daily_data['Low'].shift(1) + daily_data['Close'].shift(1)) / 3
+        daily_data['R1'] = (2 * daily_data['P']) - daily_data['Low'].shift(1)
+        daily_data['S1'] = (2 * daily_data['P']) - daily_data['High'].shift(1)
+        
+        # Map pivots back to 5-min timeframe
+        df['P'] = df.index.date
+        df['P'] = df['P'].map(daily_data['P'])
+        df['R1'] = df.index.date
+        df['R1'] = df['R1'].map(daily_data['R1'])
+        df['S1'] = df.index.date
+        df['S1'] = df['S1'].map(daily_data['S1'])
+
+        df = df.fillna(0)
         
         latest = df.iloc[-1]
         current_price = round(float(latest['Close']), 2)
@@ -113,23 +124,30 @@ def analyze_stock(symbol: str):
         except: ai_commentary = "⚠️ AI Engine busy right now."
 
         chart_data = []
-        for date, row in df.tail(150).iterrows():
-            # Extract ST values safely
+        for date, row in df.iterrows():
+            # 🔥 Unix timestamp so Lightweight Charts shows 5-min intraday correctly
+            unix_time = int(date.timestamp()) + 19800 # UTC to IST adjustment
+            
             st3_val = row.get('SUPERT_10_3.0', 0)
             st1_val = row.get('SUPERT_10_1.0', 0)
+            p_val = row.get('P', 0)
+            r1_val = row.get('R1', 0)
+            s1_val = row.get('S1', 0)
             
             chart_data.append({
-                "time": str(date.date()), 
+                "time": unix_time, 
                 "open": round(float(row['Open']), 2), "high": round(float(row['High']), 2),
                 "low": round(float(row['Low']), 2), "close": round(float(row['Close']), 2),
                 "st3": round(float(st3_val), 2) if st3_val != 0 else None,
-                "st1": round(float(st1_val), 2) if st1_val != 0 else None
+                "st1": round(float(st1_val), 2) if st1_val != 0 else None,
+                "p": round(float(p_val), 2) if p_val != 0 else None,
+                "r1": round(float(r1_val), 2) if r1_val != 0 else None,
+                "s1": round(float(s1_val), 2) if s1_val != 0 else None
             })
 
         result = {
             "symbol": yf_symbol.replace(".NS", ""),
             "latest_close": current_price,
-            "pivots": {"p": round(p, 2), "r1": round(r1, 2), "s1": round(s1, 2)},
             "ai_prediction": ai_commentary,
             "historical_chart_data": chart_data
         }
