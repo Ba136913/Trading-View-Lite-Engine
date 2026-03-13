@@ -21,7 +21,6 @@ app.add_middleware(
 
 cache = TTLCache(maxsize=500, ttl=300)
 
-# Gemini API Load
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -29,7 +28,6 @@ if GEMINI_API_KEY:
 else:
     ai_model = None
 
-# FULL F&O STOCKS LIST
 TICKERS = [
     "AARTIIND.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABFRL.NS", "ACC.NS", "ADANIENT.NS", "ADANIPORTS.NS", 
     "ALKEM.NS", "AMBUJACEM.NS", "APOLLOHOSP.NS", "APOLLOTYRE.NS", "ASHOKLEY.NS", "ASIANPAINT.NS", "ASTRAL.NS", 
@@ -60,22 +58,24 @@ TICKERS = [
 def run_swing_scanner():
     if "scanner_data" in cache: return cache["scanner_data"]
     try:
-        data = yf.download(TICKERS, period="5d", group_by='ticker', threads=True)
+        # 🔥 FIX: Sirf 5 din ka data download karo aur sirf 'Close' price uthao
+        data = yf.download(TICKERS, period="5d", progress=False)
+        closes = data['Close']
+        
         all_performance = []
         date_str = datetime.date.today().strftime("%Y-%m-%d")
 
         for ticker in TICKERS:
-            try:
-                df = data[ticker].dropna()
-                if len(df) < 2: continue
-                date_str = df.index[-1].strftime("%Y-%m-%d")
-                close_today = float(df['Close'].iloc[-1])
-                close_yest = float(df['Close'].iloc[-2])
-                pct_change = round(((close_today - close_yest) / close_yest) * 100, 2)
-                symbol_name = ticker.replace(".NS", "")
-                all_performance.append({"Symbol": symbol_name, "Percent": pct_change, "Price": round(close_today, 2)})
-            except: continue
-                
+            if ticker in closes.columns:
+                series = closes[ticker].dropna()
+                if len(series) >= 2:
+                    close_today = float(series.iloc[-1])
+                    close_yest = float(series.iloc[-2])
+                    if close_yest > 0:
+                        pct_change = round(((close_today - close_yest) / close_yest) * 100, 2)
+                        symbol_name = ticker.replace(".NS", "")
+                        all_performance.append({"Symbol": symbol_name, "Percent": pct_change, "Price": round(close_today, 2)})
+
         gainers = sorted([s for s in all_performance if s['Percent'] > 0], key=lambda x: x['Percent'], reverse=True)[:15]
         losers = sorted([s for s in all_performance if s['Percent'] < 0], key=lambda x: x['Percent'])[:15]
 
@@ -86,7 +86,8 @@ def run_swing_scanner():
         cache["scanner_data"] = result
         return result
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Scanner Error: {str(e)}"}
+
 
 def get_ai_prediction(symbol, current_price, ind):
     if not ai_model: return "⚠️ AI prediction disabled. API Key not found."
@@ -106,20 +107,18 @@ def analyze_stock(symbol: str):
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
 
     try:
-        # 🔥 THE BUG FIX: Using yf.Ticker() instead of yf.download() to get clean, flat data
-        stock = yf.Ticker(yf_symbol)
-        df = stock.history(period="1y", interval="1d")
+        df = yf.download(yf_symbol, period="1y", interval="1d", progress=False)
         
+        # 🔥 FIX: Agar yfinance MultiIndex bhejta hai, toh usko normal columns me convert karo
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+
         if df.empty or len(df) < 50: 
             return {"status": "error", "message": f"Data not found for {symbol}. Try valid F&O symbol."}
-        
-        # Clean Timezone so JSON doesn't crash
-        if df.index.tz is not None:
-            df.index = df.index.tz_localize(None)
-
+            
         df = df.ffill().bfill()
         
-        # Calculate Technicals
+        # Technicals Calculation
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
         df.ta.rsi(length=14, append=True)
