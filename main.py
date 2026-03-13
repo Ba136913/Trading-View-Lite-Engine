@@ -70,12 +70,11 @@ def run_swing_scanner():
     except Exception as e:
         return {"status": "error", "message": f"Scanner Error: {str(e)}"}
 
-def get_ai_prediction(symbol, current_price, ind):
+def get_ai_prediction(symbol, current_price):
     if not ai_model: return "⚠️ AI prediction disabled. API Key not found."
     prompt = f"""
     Act as a Hedge Fund Quant. Analyze daily chart for {symbol} (NSE). Price: ₹{current_price}.
-    RSI: {ind['RSI_14']}. 20-EMA: {ind['EMA_20']}. 50-EMA: {ind['EMA_50']}. MACD: {ind['MACD']}.
-    Give a sharp, 3-sentence institutional trading prediction. Focus on immediate trend, momentum, and next support/resistance.
+    Give a sharp, 3-sentence institutional trading prediction. Focus on immediate trend, momentum, and next support/resistance based on price action.
     """
     try: return ai_model.generate_content(prompt).text.replace("*", "")
     except: return "⚠️ AI Engine currently busy."
@@ -96,15 +95,9 @@ def analyze_stock(symbol: str):
             
         df = df.ffill().bfill()
         
-        # 🔥 FIX 1: Safe SuperTrend Calculation (No Column Name Crash)
-        st3 = df.ta.supertrend(length=10, multiplier=3)
-        st1 = df.ta.supertrend(length=10, multiplier=1)
-        
-        # Adding traditional indicators so the frontend doesn't break
-        df.ta.ema(length=20, append=True)
-        df.ta.ema(length=50, append=True)
-        df.ta.rsi(length=14, append=True)
-        df.ta.macd(fast=12, slow=26, signal=9, append=True)
+        # 🔥 SAFELY Calculate SuperTrend
+        df.ta.supertrend(length=10, multiplier=3, append=True)
+        df.ta.supertrend(length=10, multiplier=1, append=True)
         df = df.fillna(0)
         
         # Daily Pivots
@@ -115,33 +108,27 @@ def analyze_stock(symbol: str):
         
         latest = df.iloc[-1]
         current_price = round(float(latest['Close']), 2)
-        
-        ind_dict = {
-            "RSI_14": round(float(latest['RSI_14']), 2) if 'RSI_14' in df.columns else 0,
-            "EMA_20": round(float(latest['EMA_20']), 2) if 'EMA_20' in df.columns else 0,
-            "EMA_50": round(float(latest['EMA_50']), 2) if 'EMA_50' in df.columns else 0,
-            "MACD": round(float(latest.get('MACD_12_26_9', 0)), 2)
-        }
 
-        try: ai_commentary = get_ai_prediction(yf_symbol.replace(".NS",""), current_price, ind_dict)
+        try: ai_commentary = get_ai_prediction(yf_symbol.replace(".NS",""), current_price)
         except: ai_commentary = "⚠️ AI Engine busy right now."
 
         chart_data = []
-        for i, (date, row) in enumerate(df.tail(150).iterrows()):
+        for date, row in df.tail(150).iterrows():
+            # Extract ST values safely
+            st3_val = row.get('SUPERT_10_3.0', 0)
+            st1_val = row.get('SUPERT_10_1.0', 0)
+            
             chart_data.append({
                 "time": str(date.date()), 
                 "open": round(float(row['Open']), 2), "high": round(float(row['High']), 2),
                 "low": round(float(row['Low']), 2), "close": round(float(row['Close']), 2),
-                "ema20": round(float(row.get('EMA_20', 0)), 2) or None,
-                "ema50": round(float(row.get('EMA_50', 0)), 2) or None,
-                "st3": round(float(st3.iloc[-150 + i, 0]), 2) if st3 is not None and not st3.empty else None,
-                "st1": round(float(st1.iloc[-150 + i, 0]), 2) if st1 is not None and not st1.empty else None
+                "st3": round(float(st3_val), 2) if st3_val != 0 else None,
+                "st1": round(float(st1_val), 2) if st1_val != 0 else None
             })
 
         result = {
             "symbol": yf_symbol.replace(".NS", ""),
             "latest_close": current_price,
-            "indicators": ind_dict,
             "pivots": {"p": round(p, 2), "r1": round(r1, 2), "s1": round(s1, 2)},
             "ai_prediction": ai_commentary,
             "historical_chart_data": chart_data
