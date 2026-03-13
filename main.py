@@ -1,10 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-import yfinance as yf # type: ignore
-import pandas as pd # type: ignore
-import pandas_ta as ta # type: ignore
-import google.generativeai as genai # type: ignore
-from cachetools import TTLCache # type: ignore
+import yfinance as yf
+import pandas as pd
+import pandas_ta as ta
+import google.generativeai as genai
+from cachetools import TTLCache
 import uvicorn
 import os
 import datetime
@@ -19,10 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# 🚀 SMART CACHE: 50+ users handle karne ke liye (5 mins memory)
 cache = TTLCache(maxsize=500, ttl=300)
 
-# 🧠 GEMINI AI SETUP
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -30,7 +28,7 @@ if GEMINI_API_KEY:
 else:
     ai_model = None
 
-# 🚀 ALL MAJOR NSE F&O STOCKS LIST (Scanner ke liye)
+# F&O STOCKS LIST
 TICKERS = [
     "AARTIIND.NS", "ABB.NS", "ABBOTINDIA.NS", "ABCAPITAL.NS", "ABFRL.NS", "ACC.NS", "ADANIENT.NS", "ADANIPORTS.NS", 
     "ALKEM.NS", "AMBUJACEM.NS", "APOLLOHOSP.NS", "APOLLOTYRE.NS", "ASHOKLEY.NS", "ASIANPAINT.NS", "ASTRAL.NS", 
@@ -57,7 +55,6 @@ TICKERS = [
     "VEDL.NS", "VOLTAS.NS", "WIPRO.NS", "ZEEL.NS", "ZYDUSLIFE.NS"
 ]
 
-# --- 1. SCANNER ROUTE (Gainers/Losers Radar) ---
 @app.get("/api/swing-scanner")
 def run_swing_scanner():
     if "scanner_data" in cache:
@@ -65,7 +62,7 @@ def run_swing_scanner():
 
     try:
         data = yf.download(TICKERS, period="60d", group_by='ticker', threads=True)
-        reversals, breakouts = [], []
+        reversals, breakouts, all_performance = [], [], []
         date_str = datetime.date.today().strftime("%Y-%m-%d")
 
         for ticker in TICKERS:
@@ -74,57 +71,75 @@ def run_swing_scanner():
                 if len(df) < 21: continue
                 date_str = df.index[-1].strftime("%Y-%m-%d")
 
-                close_today, open_today = float(df['Close'].iloc[-1]), float(df['Open'].iloc[-1])
-                high_today, low_today = float(df['High'].iloc[-1]), float(df['Low'].iloc[-1])
-                close_yest, open_yest = float(df['Close'].iloc[-2]), float(df['Open'].iloc[-2])
-                high_yest, low_yest = float(df['High'].iloc[-2]), float(df['Low'].iloc[-2])
+                close_today = float(df['Close'].iloc[-1])
+                open_today = float(df['Open'].iloc[-1])
+                high_today = float(df['High'].iloc[-1])
+                low_today = float(df['Low'].iloc[-1])
+                close_yest = float(df['Close'].iloc[-2])
+                open_yest = float(df['Open'].iloc[-2])
+                high_yest = float(df['High'].iloc[-2])
+                low_yest = float(df['Low'].iloc[-2])
                 
                 pct_change = round(((close_today - close_yest) / close_yest) * 100, 2)
                 symbol_name = ticker.replace(".NS", "")
 
-                # Breakout Logic (20 Days)
+                # Performance list for Gainers/Losers
+                all_performance.append({"Symbol": symbol_name, "Percent": pct_change, "Price": close_today})
+
+                # Breakout Logic
                 past_20_days = df.iloc[-21:-1]
-                high_20, low_20 = float(past_20_days['High'].max()), float(past_20_days['Low'].min())
+                high_20 = float(past_20_days['High'].max())
+                low_20 = float(past_20_days['Low'].min())
                 
                 if ((high_20 - low_20) / low_20) < 0.10 and close_today > high_20:
-                    breakouts.append({"Symbol": symbol_name, "Percent": pct_change, "Date": date_str, "Signal": "BULL"})
+                    breakouts.append({"Symbol": symbol_name, "Percent": pct_change, "Signal": "BULL"})
                 elif ((high_20 - low_20) / low_20) < 0.10 and close_today < low_20:
-                    breakouts.append({"Symbol": symbol_name, "Percent": pct_change, "Date": date_str, "Signal": "BEAR"})
+                    breakouts.append({"Symbol": symbol_name, "Percent": pct_change, "Signal": "BEAR"})
 
                 # Reversal Logic
                 if close_yest < open_yest and close_today > open_today and close_today > high_yest:
-                    reversals.append({"Symbol": symbol_name, "Percent": pct_change, "Date": date_str, "Signal": "BULL"})
+                    reversals.append({"Symbol": symbol_name, "Percent": pct_change, "Signal": "BULL"})
                 elif close_yest > open_yest and close_today < open_today and close_today < low_yest:
-                    reversals.append({"Symbol": symbol_name, "Percent": pct_change, "Date": date_str, "Signal": "BEAR"})
+                    reversals.append({"Symbol": symbol_name, "Percent": pct_change, "Signal": "BEAR"})
             except: continue
                 
+        # Sorting
         reversals.sort(key=lambda x: abs(x['Percent']), reverse=True)
         breakouts.sort(key=lambda x: abs(x['Percent']), reverse=True)
+        
+        # Gainers & Losers Logic
+        gainers = sorted([s for s in all_performance if s['Percent'] > 0], key=lambda x: x['Percent'], reverse=True)[:10]
+        losers = sorted([s for s in all_performance if s['Percent'] < 0], key=lambda x: x['Percent'])[:10]
 
-        result = {"status": "success", "date": date_str, "data": {"reversals": reversals, "breakouts": breakouts}}
+        result = {
+            "status": "success", 
+            "date": date_str, 
+            "data": {
+                "top_gainers": gainers,
+                "top_losers": losers,
+                "reversals": reversals, 
+                "breakouts": breakouts
+            }
+        }
         cache["scanner_data"] = result
         return result
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-
-# --- 2. DEEP AI ANALYZER ROUTE (Chart & Gemini) ---
 def get_ai_prediction(symbol, current_price, ind):
-    if not ai_model: return "⚠️ AI prediction disabled. Please add GEMINI_API_KEY in Render."
+    if not ai_model: return "⚠️ AI prediction disabled."
     prompt = f"""
     Act as a Hedge Fund Quant. Analyze daily chart for {symbol} (NSE). Price: ₹{current_price}.
     RSI: {ind['RSI_14']}. 20-EMA: {ind['EMA_20']}. 50-EMA: {ind['EMA_50']}. MACD: {ind['MACD']}.
-    Give a sharp, 3-sentence institutional trading prediction. Focus on immediate trend, momentum, and next support/resistance. Keep it crisp, no formatting asterisks.
+    Give a sharp, 3-sentence institutional trading prediction. Focus on immediate trend, momentum, and next support/resistance.
     """
-    try:
-        return ai_model.generate_content(prompt).text.replace("*", "")
-    except:
-        return "⚠️ AI Engine currently busy or unavailable."
+    try: return ai_model.generate_content(prompt).text.replace("*", "")
+    except: return "⚠️ AI Engine currently busy."
 
 @app.get("/api/analyze/{symbol}")
 def analyze_stock(symbol: str):
-    yf_symbol = symbol.upper()
-    if not yf_symbol.endswith(".NS"): yf_symbol += ".NS"
+    # Auto-format smart cleanup
+    yf_symbol = symbol.upper().replace(" ", "").replace(".NS", "") + ".NS"
 
     cache_key = f"analyze_{yf_symbol}"
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
@@ -134,7 +149,6 @@ def analyze_stock(symbol: str):
         if df.empty or len(df) < 50: raise HTTPException(status_code=404, detail="Stock data not found.")
         df = df.ffill().bfill()
 
-        # Math Indicators
         df.ta.ema(length=20, append=True)
         df.ta.ema(length=50, append=True)
         df.ta.rsi(length=14, append=True)
@@ -151,9 +165,8 @@ def analyze_stock(symbol: str):
             "MACD": round(float(latest['MACD_12_26_9']), 2)
         }
 
-        ai_commentary = get_ai_prediction(symbol.upper(), current_price, ind_dict)
+        ai_commentary = get_ai_prediction(yf_symbol.replace(".NS",""), current_price, ind_dict)
 
-        # Chart Data with EMA overlays
         chart_data = []
         for date, row in df.tail(150).iterrows():
             chart_data.append({
@@ -165,7 +178,7 @@ def analyze_stock(symbol: str):
             })
 
         result = {
-            "symbol": symbol.upper().replace(".NS", ""),
+            "symbol": yf_symbol.replace(".NS", ""),
             "latest_close": current_price,
             "indicators": ind_dict,
             "ai_prediction": ai_commentary,
@@ -175,7 +188,7 @@ def analyze_stock(symbol: str):
         cache[cache_key] = result
         return {"status": "success", "data": result}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": "Invalid Stock Symbol or Data Missing."}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000)
