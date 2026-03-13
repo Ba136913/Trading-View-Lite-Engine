@@ -8,7 +8,6 @@ from cachetools import TTLCache
 import uvicorn
 import os
 import datetime
-import math
 
 app = FastAPI()
 
@@ -72,11 +71,8 @@ def run_swing_scanner():
         return {"status": "error", "message": f"Scanner Error: {str(e)}"}
 
 def get_ai_prediction(symbol, current_price):
-    if not ai_model: return "⚠️ AI prediction disabled. API Key not found."
-    prompt = f"""
-    Act as a Hedge Fund Quant. Analyze 5-min Intraday chart for {symbol} (NSE). Current Price: ₹{current_price}.
-    Give a sharp, 3-sentence intraday momentum prediction based on current price action.
-    """
+    if not ai_model: return "⚠️ AI prediction disabled."
+    prompt = f"""Act as a Hedge Fund Quant. Analyze Intraday (5-min) chart for {symbol} (NSE). Price: ₹{current_price}. Give 2-sentence sharp momentum prediction."""
     try: return ai_model.generate_content(prompt).text.replace("*", "")
     except: return "⚠️ AI Engine currently busy."
 
@@ -88,67 +84,70 @@ def analyze_stock(symbol: str):
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
 
     try:
-        # 🔥 FIX: 5-Minute Timeframe Data
-        df = yf.download(yf_symbol, period="5d", interval="5m", progress=False)
-        if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+        # 🔥 FIX: 1. Fetch 5-Min Intraday Data
+        df_5m = yf.download(yf_symbol, period="5d", interval="5m", progress=False)
+        # 🔥 FIX: 2. Fetch Daily Data strictly for Authentic Pivot Points
+        df_daily = yf.download(yf_symbol, period="10d", interval="1d", progress=False)
 
-        if df.empty or len(df) < 50: 
-            return {"status": "error", "message": f"Intraday Data not found for {symbol}."}
-            
-        df = df.ffill().bfill()
-        
-        # SuperTrend on 5-min
-        df.ta.supertrend(length=10, multiplier=3, append=True)
-        df.ta.supertrend(length=10, multiplier=1, append=True)
-        
-        # 🔥 FIX: Real Step-like Pivot Points (Calculated per day)
-        daily_data = df.groupby(df.index.date).agg({'High': 'max', 'Low': 'min', 'Close': 'last'})
-        daily_data['P'] = (daily_data['High'].shift(1) + daily_data['Low'].shift(1) + daily_data['Close'].shift(1)) / 3
-        daily_data['R1'] = (2 * daily_data['P']) - daily_data['Low'].shift(1)
-        daily_data['S1'] = (2 * daily_data['P']) - daily_data['High'].shift(1)
-        
-        # Map pivots back to 5-min timeframe
-        df['P'] = df.index.date
-        df['P'] = df['P'].map(daily_data['P'])
-        df['R1'] = df.index.date
-        df['R1'] = df['R1'].map(daily_data['R1'])
-        df['S1'] = df.index.date
-        df['S1'] = df['S1'].map(daily_data['S1'])
+        if isinstance(df_5m.columns, pd.MultiIndex): df_5m.columns = df_5m.columns.get_level_values(0)
+        if isinstance(df_daily.columns, pd.MultiIndex): df_daily.columns = df_daily.columns.get_level_values(0)
 
-        df = df.fillna(0)
-        
-        latest = df.iloc[-1]
-        current_price = round(float(latest['Close']), 2)
+        if df_5m.empty or len(df_5m) < 20: 
+            return {"status": "error", "message": f"Data not found for {symbol}."}
 
-        try: ai_commentary = get_ai_prediction(yf_symbol.replace(".NS",""), current_price)
-        except: ai_commentary = "⚠️ AI Engine busy right now."
+        # ----------------------------------------------------
+        # 🔥 EXACT PIVOT POINTS MATH (Using previous day data)
+        # ----------------------------------------------------
+        df_daily['P'] = (df_daily['High'] + df_daily['Low'] + df_daily['Close']) / 3
+        df_daily['R1'] = (2 * df_daily['P']) - df_daily['Low']
+        df_daily['S1'] = (2 * df_daily['P']) - df_daily['High']
+        
+        # Shift daily pivots by 1 day so today uses yesterday's pivots
+        df_daily['P'] = df_daily['P'].shift(1)
+        df_daily['R1'] = df_daily['R1'].shift(1)
+        df_daily['S1'] = df_daily['S1'].shift(1)
+
+        # Remove Timezones for mapping
+        df_daily.index = df_daily.index.tz_localize(None).date
+        df_5m['date_only'] = df_5m.index.tz_localize(None).date
+
+        # Map Authentic Pivots onto 5-min chart
+        df_5m['P'] = df_5m['date_only'].map(df_daily['P'])
+        df_5m['R1'] = df_5m['date_only'].map(df_daily['R1'])
+        df_5m['S1'] = df_5m['date_only'].map(df_daily['S1'])
+
+        # ----------------------------------------------------
+        # 🔥 SAFELY CALCULATE SUPERTREND
+        # ----------------------------------------------------
+        st3 = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=3)
+        st1 = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=1)
+
+        df_5m['st3'] = st3.iloc[:, 0] if st3 is not None and not st3.empty else 0
+        df_5m['st1'] = st1.iloc[:, 0] if st1 is not None and not st1.empty else 0
+
+        df_5m = df_5m.fillna(0)
+        latest_price = round(float(df_5m.iloc[-1]['Close']), 2)
 
         chart_data = []
-        for date, row in df.iterrows():
-            # 🔥 Unix timestamp so Lightweight Charts shows 5-min intraday correctly
-            unix_time = int(date.timestamp()) + 19800 # UTC to IST adjustment
-            
-            st3_val = row.get('SUPERT_10_3.0', 0)
-            st1_val = row.get('SUPERT_10_1.0', 0)
-            p_val = row.get('P', 0)
-            r1_val = row.get('R1', 0)
-            s1_val = row.get('S1', 0)
+        for dt, row in df_5m.iterrows():
+            # 🔥 Generate True Unix Timestamp for 5-Min Graph plotting
+            unix_t = int(pd.Timestamp(dt).timestamp())
             
             chart_data.append({
-                "time": unix_time, 
+                "time": unix_t, 
                 "open": round(float(row['Open']), 2), "high": round(float(row['High']), 2),
                 "low": round(float(row['Low']), 2), "close": round(float(row['Close']), 2),
-                "st3": round(float(st3_val), 2) if st3_val != 0 else None,
-                "st1": round(float(st1_val), 2) if st1_val != 0 else None,
-                "p": round(float(p_val), 2) if p_val != 0 else None,
-                "r1": round(float(r1_val), 2) if r1_val != 0 else None,
-                "s1": round(float(s1_val), 2) if s1_val != 0 else None
+                "st3": round(float(row['st3']), 2) if row['st3'] != 0 else None,
+                "st1": round(float(row['st1']), 2) if row['st1'] != 0 else None,
+                "p": round(float(row['P']), 2) if row['P'] != 0 else None,
+                "r1": round(float(row['R1']), 2) if row['R1'] != 0 else None,
+                "s1": round(float(row['S1']), 2) if row['S1'] != 0 else None
             })
 
         result = {
             "symbol": yf_symbol.replace(".NS", ""),
-            "latest_close": current_price,
-            "ai_prediction": ai_commentary,
+            "latest_close": latest_price,
+            "ai_prediction": get_ai_prediction(yf_symbol.replace(".NS",""), latest_price),
             "historical_chart_data": chart_data
         }
         
