@@ -8,6 +8,7 @@ from cachetools import TTLCache
 import uvicorn
 import os
 import datetime
+import math
 
 app = FastAPI()
 
@@ -70,11 +71,9 @@ def run_swing_scanner():
     except Exception as e:
         return {"status": "error", "message": f"Scanner Error: {str(e)}"}
 
-def get_ai_prediction(symbol, current_price):
-    if not ai_model: return "⚠️ AI prediction disabled."
-    prompt = f"""Act as a Hedge Fund Quant. Analyze Intraday (5-min) chart for {symbol} (NSE). Price: ₹{current_price}. Give 2-sentence sharp momentum prediction."""
-    try: return ai_model.generate_content(prompt).text.replace("*", "")
-    except: return "⚠️ AI Engine currently busy."
+def safe_val(val):
+    if pd.isna(val) or math.isnan(val): return None
+    return round(float(val), 2)
 
 @app.get("/api/analyze/{symbol}")
 def analyze_stock(symbol: str):
@@ -84,9 +83,8 @@ def analyze_stock(symbol: str):
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
 
     try:
-        # 🔥 FIX: 1. Fetch 5-Min Intraday Data
+        # Fetch Intraday and Daily
         df_5m = yf.download(yf_symbol, period="5d", interval="5m", progress=False)
-        # 🔥 FIX: 2. Fetch Daily Data strictly for Authentic Pivot Points
         df_daily = yf.download(yf_symbol, period="10d", interval="1d", progress=False)
 
         if isinstance(df_5m.columns, pd.MultiIndex): df_5m.columns = df_5m.columns.get_level_values(0)
@@ -96,58 +94,64 @@ def analyze_stock(symbol: str):
             return {"status": "error", "message": f"Data not found for {symbol}."}
 
         # ----------------------------------------------------
-        # 🔥 EXACT PIVOT POINTS MATH (Using previous day data)
+        # 🔥 TRADINGVIEW TRADITIONAL PIVOTS MATH (P, R1-R5, S1-S5)
         # ----------------------------------------------------
-        df_daily['P'] = (df_daily['High'] + df_daily['Low'] + df_daily['Close']) / 3
-        df_daily['R1'] = (2 * df_daily['P']) - df_daily['Low']
-        df_daily['S1'] = (2 * df_daily['P']) - df_daily['High']
+        H = df_daily['High']
+        L = df_daily['Low']
+        C = df_daily['Close']
         
-        # Shift daily pivots by 1 day so today uses yesterday's pivots
-        df_daily['P'] = df_daily['P'].shift(1)
-        df_daily['R1'] = df_daily['R1'].shift(1)
-        df_daily['S1'] = df_daily['S1'].shift(1)
+        df_daily['P'] = (H + L + C) / 3
+        df_daily['R1'] = (2 * df_daily['P']) - L
+        df_daily['S1'] = (2 * df_daily['P']) - H
+        df_daily['R2'] = df_daily['P'] + (H - L)
+        df_daily['S2'] = df_daily['P'] - (H - L)
+        df_daily['R3'] = df_daily['R1'] + (H - L)
+        df_daily['S3'] = df_daily['S1'] - (H - L)
+        df_daily['R4'] = df_daily['R3'] + (H - L)
+        df_daily['S4'] = df_daily['S3'] - (H - L)
+        df_daily['R5'] = df_daily['R4'] + (H - L)
+        df_daily['S5'] = df_daily['S4'] - (H - L)
 
-        # Remove Timezones for mapping
-        df_daily.index = df_daily.index.tz_localize(None).date
+        # Shift by 1 so 5-min candles use yesterday's values
+        pivots_shifted = df_daily[['P', 'R1', 'R2', 'R3', 'R4', 'R5', 'S1', 'S2', 'S3', 'S4', 'S5']].shift(1)
+        pivots_shifted.index = pivots_shifted.index.tz_localize(None).date
+        
         df_5m['date_only'] = df_5m.index.tz_localize(None).date
 
-        # Map Authentic Pivots onto 5-min chart
-        df_5m['P'] = df_5m['date_only'].map(df_daily['P'])
-        df_5m['R1'] = df_5m['date_only'].map(df_daily['R1'])
-        df_5m['S1'] = df_5m['date_only'].map(df_daily['S1'])
+        # Map to 5-min chart
+        for col in ['P', 'R1', 'R2', 'R3', 'R4', 'R5', 'S1', 'S2', 'S3', 'S4', 'S5']:
+            df_5m[col] = df_5m['date_only'].map(pivots_shifted[col])
 
         # ----------------------------------------------------
-        # 🔥 SAFELY CALCULATE SUPERTREND
+        # 🔥 CRASH-PROOF SUPERTREND CALCULATION
         # ----------------------------------------------------
         st3 = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=3)
         st1 = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=1)
 
-        df_5m['st3'] = st3.iloc[:, 0] if st3 is not None and not st3.empty else 0
-        df_5m['st1'] = st1.iloc[:, 0] if st1 is not None and not st1.empty else 0
+        # iloc[:, 0] ensures we grab the line data regardless of what name pandas_ta gives it
+        df_5m['st3'] = st3.iloc[:, 0] if st3 is not None and not st3.empty else None
+        df_5m['st1'] = st1.iloc[:, 0] if st1 is not None and not st1.empty else None
 
-        df_5m = df_5m.fillna(0)
         latest_price = round(float(df_5m.iloc[-1]['Close']), 2)
-
+        
+        # Build JSON response
         chart_data = []
         for dt, row in df_5m.iterrows():
-            # 🔥 Generate True Unix Timestamp for 5-Min Graph plotting
-            unix_t = int(pd.Timestamp(dt).timestamp())
+            unix_t = int(dt.timestamp()) # Proper Intraday Time format
             
             chart_data.append({
                 "time": unix_t, 
-                "open": round(float(row['Open']), 2), "high": round(float(row['High']), 2),
-                "low": round(float(row['Low']), 2), "close": round(float(row['Close']), 2),
-                "st3": round(float(row['st3']), 2) if row['st3'] != 0 else None,
-                "st1": round(float(row['st1']), 2) if row['st1'] != 0 else None,
-                "p": round(float(row['P']), 2) if row['P'] != 0 else None,
-                "r1": round(float(row['R1']), 2) if row['R1'] != 0 else None,
-                "s1": round(float(row['S1']), 2) if row['S1'] != 0 else None
+                "open": safe_val(row['Open']), "high": safe_val(row['High']),
+                "low": safe_val(row['Low']), "close": safe_val(row['Close']),
+                "st3": safe_val(row['st3']), "st1": safe_val(row['st1']),
+                "p": safe_val(row['P']), 
+                "r1": safe_val(row['R1']), "r2": safe_val(row['R2']), "r3": safe_val(row['R3']), "r4": safe_val(row['R4']), "r5": safe_val(row['R5']),
+                "s1": safe_val(row['S1']), "s2": safe_val(row['S2']), "s3": safe_val(row['S3']), "s4": safe_val(row['S4']), "s5": safe_val(row['S5'])
             })
 
         result = {
             "symbol": yf_symbol.replace(".NS", ""),
             "latest_close": latest_price,
-            "ai_prediction": get_ai_prediction(yf_symbol.replace(".NS",""), latest_price),
             "historical_chart_data": chart_data
         }
         
@@ -155,7 +159,7 @@ def analyze_stock(symbol: str):
         return {"status": "success", "data": result}
         
     except Exception as e:
-        return {"status": "error", "message": f"Backend Error: {str(e)}"}
+        return {"status": "error", "message": str(e)}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000)
