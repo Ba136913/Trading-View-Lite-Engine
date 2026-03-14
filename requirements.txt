@@ -1,9 +1,9 @@
 fastapi
 uvicorn
-requests
 yfinance
 pandas
-pandas-ta
+pandas_ta
+google-generativeai>=0.8.0
 cachetools
-google-generativeai
+requests
 numpy
