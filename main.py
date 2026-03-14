@@ -33,7 +33,7 @@ TICKERS = [
 def get_ai_prediction(prompt):
     if not groq_client: return "⚠️ Groq API Key is missing in Render Environment Variables."
     try:
-        # Using Meta's Llama 3 8B model for lightning-fast trading analysis
+        # Meta's Llama 3 8B model for lightning-fast trading analysis
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a professional hedge fund quant. Give extremely sharp, concise, 2-sentence momentum predictions based on the provided technicals."},
