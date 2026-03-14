@@ -25,7 +25,8 @@ cache = TTLCache(maxsize=500, ttl=300)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
+    # 🔥 FIX 1: Changed model to 'gemini-pro' (100% Supported on all servers)
+    ai_model = genai.GenerativeModel('gemini-pro')
 else:
     ai_model = None
 
@@ -35,10 +36,13 @@ TICKERS = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "I
 def run_swing_scanner():
     if "scanner_data" in cache: return cache["scanner_data"]
     try:
-        # 🔥 FIX: Removed custom session, letting YF handle the bypass natively
         data = yf.download(TICKERS, period="5d", progress=False)
-        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-        closes = data['Close'] if 'Close' in data else data
+        
+        # 🔥 FIX 2: Correctly extracting 'Close' prices without deleting Ticker names
+        if isinstance(data.columns, pd.MultiIndex):
+            closes = data['Close']
+        else:
+            closes = data['Close'] if 'Close' in data else data
         
         all_performance = []
         for ticker in TICKERS:
@@ -73,7 +77,6 @@ def analyze_stock(symbol: str, timeframe: str):
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
 
     try:
-        # 🔥 FIX: Removed custom session here as well
         df = yf.download(yf_symbol, period=period, interval=timeframe, progress=False)
         df_daily = yf.download(yf_symbol, period="15d", interval="1d", progress=False)
 
@@ -130,7 +133,7 @@ def analyze_stock(symbol: str, timeframe: str):
                 "s1": safe_val(row['S1']), "s2": safe_val(row['S2']), "s3": safe_val(row['S3']), "s4": safe_val(row['S4']), "s5": safe_val(row['S5'])
             })
 
-        ai_commentary = "⚠️ AI Model not initialized. Please check if GEMINI_API_KEY is saved in Render."
+        ai_commentary = "⚠️ AI Model not initialized."
         if ai_model:
             try:
                 prompt = f"Act as a pro intraday trader. Analyze {timeframe} chart for {symbol}. Current Price is ₹{latest_price}. Give a sharp, 2-sentence momentum prediction based on standard technicals."
