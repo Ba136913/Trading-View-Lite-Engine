@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
@@ -13,7 +14,7 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 cache = TTLCache(maxsize=500, ttl=300)
 
-# 🔥 SHIFTED TO GROQ (LLAMA 3.1)
+# 🔥 GROQ LLAMA 3.1
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
@@ -30,21 +31,49 @@ TICKERS = [
 ]
 
 def get_ai_prediction(prompt):
-    if not groq_client: return "⚠️ Groq API Key is missing in Render Environment Variables."
+    if not groq_client: return "⚠️ Groq API Key missing."
     try:
-        # 🔥 FIX: Updated to the newest active Groq model (Llama 3.1 8B Instant)
-        chat_completion = groq_client.chat.completions.create(
+        chat = groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a professional hedge fund quant. Give extremely sharp, concise, 2-sentence momentum predictions based on the provided technicals."},
+                {"role": "system", "content": "You are a pro hedge fund quant. Give sharp, concise, 2-sentence momentum predictions."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama-3.1-8b-instant",  # <--- YAHAN CHANGE KIYA HAI
+            model="llama-3.1-8b-instant",
             temperature=0.5,
             max_tokens=100,
         )
-        return chat_completion.choices[0].message.content.replace("*", "")
+        return chat.choices[0].message.content.replace("*", "")
     except Exception as e:
-        return f"⚠️ AI Engine Error: {str(e)[:150]}..."
+        return f"⚠️ AI Error: {str(e)[:150]}..."
+
+# 🔥 NEW: Chat Input Model
+class ChatRequest(BaseModel):
+    symbol: str
+    timeframe: str
+    message: str
+    price: float
+    rsi: float
+
+# 🔥 NEW: Live Chat Endpoint
+@app.post("/api/chat")
+def chat_with_ai(req: ChatRequest):
+    if not groq_client: return {"status": "error", "message": "Groq API Key missing."}
+    try:
+        system_prompt = f"You are a professional trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. The user will ask you questions about strategies, targets, or analysis. Answer sharply like a Wall Street trader. Keep it under 4 sentences."
+        
+        chat = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": req.message}
+            ],
+            model="llama-3.1-8b-instant",
+            temperature=0.7,
+            max_tokens=200,
+        )
+        reply = chat.choices[0].message.content.replace("*", "")
+        return {"status": "success", "reply": reply}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/swing-scanner")
 def run_swing_scanner():
@@ -69,11 +98,10 @@ def analyze_stock(symbol: str, timeframe: str):
         if isinstance(df_daily.columns, pd.MultiIndex): df_daily.columns = df_daily.columns.get_level_values(0)
         
         if df.empty or 'Close' not in df.columns or df['Close'].dropna().empty: 
-            return {"status": "error", "message": f"Market Data unavailable for {symbol}. Yahoo Finance might be blocking this temporarily. Try again later."}
+            return {"status": "error", "message": f"Market Data unavailable for {symbol}."}
 
         df = df.dropna(subset=['Close'])
 
-        # PIVOTS
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         df_daily['P'] = (H + L + C) / 3
@@ -87,10 +115,8 @@ def analyze_stock(symbol: str, timeframe: str):
         
         df.index = df.index.tz_localize(None)
         df['date_only'] = df.index.date
-        for col in ['P', 'R1', 'S1', 'R2', 'S2']:
-            df[col] = df['date_only'].map(pivots[col])
+        for col in ['P', 'R1', 'S1', 'R2', 'S2']: df[col] = df['date_only'].map(pivots[col])
 
-        # INDICATORS
         df.ta.ema(length=9, append=True)
         df.ta.ema(length=21, append=True)
         df.ta.rsi(length=14, append=True)
@@ -112,8 +138,6 @@ def analyze_stock(symbol: str, timeframe: str):
             })
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
-        
-        # Groq AI Logic
         prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Current Price: ₹{latest_price}. RSI is {chart_data[-1]['rsi']}. Tell me if it's bullish, bearish, or sideways and next immediate resistance/support."
         ai_commentary = get_ai_prediction(prompt)
 
