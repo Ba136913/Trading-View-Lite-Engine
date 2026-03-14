@@ -17,7 +17,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# 🔥 50 Ultra-Liquid F&O Stocks (Clean Names)
+# 🔥 50 Ultra-Liquid F&O Stocks
 TICKERS = [
     "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "LT", "SBIN", "BHARTIARTL", "BAJFINANCE",
     "AXISBANK", "KOTAKBANK", "ASIANPAINT", "M&M", "MARUTI", "SUNPHARMA", "TATASTEEL", "TATAMOTORS", "NTPC",
@@ -27,20 +27,26 @@ TICKERS = [
     "SUZLON", "DLF", "HAL", "BEL"
 ]
 
+# 🔥 X-RAY AI FINDER (Will show EXACT reason why Google is rejecting)
 def get_ai_prediction(prompt):
-    if not GEMINI_API_KEY: return "⚠️ Google API Key missing. Technicals running purely on math."
-    models = ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro']
-    for m in models:
-        try:
-            model = genai.GenerativeModel(m)
-            res = model.generate_content(prompt)
-            if res and res.text: return res.text.replace("*", "")
-        except Exception: continue
-    return "⚠️ Google AI Quota Exceeded. Please generate a new API key from a different Google account."
+    if not GEMINI_API_KEY: return "⚠️ Google API Key is missing in Render Environment Variables."
+    try:
+        model = genai.GenerativeModel('gemini-1.5-flash')
+        res = model.generate_content(prompt)
+        return res.text.replace("*", "")
+    except Exception as e:
+        err = str(e)
+        if "404" in err:
+            try:
+                # Fallback to older model if new one isn't supported
+                model2 = genai.GenerativeModel('gemini-pro')
+                return model2.generate_content(prompt).text.replace("*", "")
+            except Exception as e2:
+                return f"⚠️ Model Not Found. Update 'google-generativeai' in requirements.txt"
+        return f"⚠️ AI Blocked by Google. EXACT REASON: {err[:150]}..."
 
 @app.get("/api/swing-scanner")
 def run_swing_scanner():
-    # 🔥 INSTANT LOAD: No Yahoo Finance call here anymore!
     return {"status": "success", "data": {"fno_stocks": TICKERS}}
 
 def safe_val(val):
@@ -61,8 +67,11 @@ def analyze_stock(symbol: str, timeframe: str):
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         if isinstance(df_daily.columns, pd.MultiIndex): df_daily.columns = df_daily.columns.get_level_values(0)
         
+        # 🔥 ZOMATO FIX: Explicit error if Yahoo Finance blocks this specific ticker
+        if df.empty or 'Close' not in df.columns or df['Close'].dropna().empty: 
+            return {"status": "error", "message": f"Market Data unavailable for {symbol}. Yahoo Finance might be blocking this specific ticker temporarily. Try a different Timeframe or try again in 10 mins."}
+
         df = df.dropna(subset=['Close'])
-        if df.empty: return {"status": "error", "message": f"Market Data unavailable for {symbol}."}
 
         # PIVOTS
         df_daily.index = df_daily.index.tz_localize(None)
