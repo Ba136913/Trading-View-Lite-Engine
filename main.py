@@ -42,17 +42,22 @@ TICKERS = [
 ]
 
 class ChatRequest(BaseModel):
-    symbol: str
-    timeframe: str
+    symbol: str = "General"
+    timeframe: str = ""
     message: str
-    price: float
-    rsi: float
+    price: float = 0.0
+    rsi: float = 0.0
+    is_home: bool = False
 
 @app.post("/api/chat")
 def chat_with_ai(req: ChatRequest):
     if not groq_client: return {"status": "error", "message": "Groq API Key missing."}
     try:
-        system_prompt = f"You are a professional trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud and Traditional Pivot Points. Answer sharply like a Wall Street trader. Keep it under 4 sentences."
+        # 🔥 FIX: Differentiating between Home Chat and Stock Chat, and asking for DETAILED answers
+        if req.is_home:
+            system_prompt = "You are a Master Hedge Fund Quant and Trading Mentor. The user is asking general market questions or about trading strategies. Provide detailed, comprehensive, and insightful answers. If asked for live real-time data like today's top gainers, politely inform them you don't have a live internet data feed."
+        else:
+            system_prompt = f"You are a professional trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud and Pivot Points. Provide a DETAILED, in-depth technical analysis explaining your rationale step-by-step."
         
         chat = groq_client.chat.completions.create(
             messages=[
@@ -61,7 +66,7 @@ def chat_with_ai(req: ChatRequest):
             ],
             model="llama-3.1-8b-instant",
             temperature=0.7,
-            max_tokens=200,
+            max_tokens=800,  # 🔥 FIX: Increased from 100/200 to 800 for long, detailed answers
         )
         return {"status": "success", "reply": chat.choices[0].message.content.replace("*", "")}
     except Exception as e:
@@ -94,9 +99,7 @@ def analyze_stock(symbol: str, timeframe: str):
 
         df = df.dropna(subset=['Close'])
 
-        # ----------------------------------------------------
-        # 🔥 TRADITIONAL PIVOTS (Accurate up to R5/S5)
-        # ----------------------------------------------------
+        # PIVOTS
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         P_val = (H + L + C) / 3
@@ -119,54 +122,38 @@ def analyze_stock(symbol: str, timeframe: str):
         for col in ['P', 'R1', 'S1', 'R2', 'S2', 'R3', 'S3', 'R4', 'S4', 'R5', 'S5']: 
             df[col] = df['date_only'].map(pivots[col])
 
-        # ----------------------------------------------------
-        # 🔥 ICHIMOKU CLOUD MATH
-        # ----------------------------------------------------
+        # ICHIMOKU
         df.ta.rsi(length=14, append=True)
-        
-        high_9 = df['High'].rolling(9).max()
-        low_9 = df['Low'].rolling(9).min()
-        df['tenkan'] = (high_9 + low_9) / 2
-
-        high_26 = df['High'].rolling(26).max()
-        low_26 = df['Low'].rolling(26).min()
-        df['kijun'] = (high_26 + low_26) / 2
-
+        high_9 = df['High'].rolling(9).max(); low_9 = df['Low'].rolling(9).min(); df['tenkan'] = (high_9 + low_9) / 2
+        high_26 = df['High'].rolling(26).max(); low_26 = df['Low'].rolling(26).min(); df['kijun'] = (high_26 + low_26) / 2
         df['span_a'] = ((df['tenkan'] + df['kijun']) / 2).shift(26)
-
-        high_52 = df['High'].rolling(52).max()
-        low_52 = df['Low'].rolling(52).min()
-        df['span_b'] = ((high_52 + low_52) / 2).shift(26)
-
+        high_52 = df['High'].rolling(52).max(); low_52 = df['Low'].rolling(52).min(); df['span_b'] = ((high_52 + low_52) / 2).shift(26)
         df['chikou'] = df['Close'].shift(-26)
 
         chart_data = []
         for dt, row in df.iterrows():
             unix_t = int(pd.Timestamp(dt).timestamp()) + (5.5 * 3600)
             chart_data.append({
-                "time": unix_t, "open": safe_val(row['Open']), "high": safe_val(row['High']),
-                "low": safe_val(row['Low']), "close": safe_val(row['Close']),
-                "p": safe_val(row['P']), "r1": safe_val(row['R1']), "s1": safe_val(row['S1']),
-                "r2": safe_val(row['R2']), "s2": safe_val(row['S2']), "r3": safe_val(row['R3']), "s3": safe_val(row['S3']),
+                "time": unix_t, "open": safe_val(row['Open']), "high": safe_val(row['High']), "low": safe_val(row['Low']), "close": safe_val(row['Close']),
+                "p": safe_val(row['P']), "r1": safe_val(row['R1']), "s1": safe_val(row['S1']), "r2": safe_val(row['R2']), "s2": safe_val(row['S2']), "r3": safe_val(row['R3']), "s3": safe_val(row['S3']),
                 "r4": safe_val(row['R4']), "s4": safe_val(row['S4']), "r5": safe_val(row['R5']), "s5": safe_val(row['S5']),
-                "rsi": safe_val(row.get('RSI_14', 50)),
-                "tenkan": safe_val(row['tenkan']), "kijun": safe_val(row['kijun']),
-                "span_a": safe_val(row['span_a']), "span_b": safe_val(row['span_b']), "chikou": safe_val(row['chikou'])
+                "rsi": safe_val(row.get('RSI_14', 50)), "tenkan": safe_val(row['tenkan']), "kijun": safe_val(row['kijun']), "span_a": safe_val(row['span_a']), "span_b": safe_val(row['span_b']), "chikou": safe_val(row['chikou'])
             })
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
         ai_commentary = "⚠️ AI Chat Active. Ask about Pivots or Ichimoku Cloud."
         if groq_client:
             try:
-                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Tell me if it's bullish, bearish, or sideways."
+                # 🔥 FIX: Asking for detailed analysis here too
+                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Provide a detailed, multi-sentence technical breakdown."
                 chat = groq_client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": "You are an expert in technical analysis. Keep answers short and sharp (2 sentences)."},
+                        {"role": "system", "content": "You are an expert technical analyst. Provide highly detailed and thorough analysis."},
                         {"role": "user", "content": prompt}
                     ],
                     model="llama-3.1-8b-instant",
                     temperature=0.5,
-                    max_tokens=100,
+                    max_tokens=600,
                 )
                 ai_commentary = chat.choices[0].message.content.replace("*", "")
             except Exception as e:
