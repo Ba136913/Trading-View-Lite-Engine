@@ -17,52 +17,31 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# 🔥 Top 50 Liquid F&O (Safe for Yahoo Finance, No Bans)
+# 🔥 50 Ultra-Liquid F&O Stocks (Clean Names)
 TICKERS = [
-    "RELIANCE.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "TCS.NS", "ITC.NS", "LT.NS", "SBIN.NS", "BHARTIARTL.NS", "BAJFINANCE.NS",
-    "AXISBANK.NS", "KOTAKBANK.NS", "ASIANPAINT.NS", "M&M.NS", "MARUTI.NS", "SUNPHARMA.NS", "TATASTEEL.NS", "TATAMOTORS.NS", "NTPC.NS",
-    "ULTRACEMCO.NS", "POWERGRID.NS", "TITAN.NS", "BAJAJFINSV.NS", "WIPRO.NS", "HCLTECH.NS", "NESTLEIND.NS", "ONGC.NS", "JSWSTEEL.NS",
-    "HINDALCO.NS", "GRASIM.NS", "ADANIPORTS.NS", "ADANIENT.NS", "COALINDIA.NS", "TATACONSUM.NS", "DRREDDY.NS", "CIPLA.NS", "BAJAJ-AUTO.NS",
-    "EICHERMOT.NS", "DIVISLAB.NS", "BRITANNIA.NS", "HEROMOTOCO.NS", "INDUSINDBK.NS", "HDFCLIFE.NS", "SBILIFE.NS", "ZOMATO.NS", "BHEL.NS",
-    "SUZLON.NS", "DLF.NS", "HAL.NS", "BEL.NS"
+    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "LT", "SBIN", "BHARTIARTL", "BAJFINANCE",
+    "AXISBANK", "KOTAKBANK", "ASIANPAINT", "M&M", "MARUTI", "SUNPHARMA", "TATASTEEL", "TATAMOTORS", "NTPC",
+    "ULTRACEMCO", "POWERGRID", "TITAN", "BAJAJFINSV", "WIPRO", "HCLTECH", "NESTLEIND", "ONGC", "JSWSTEEL",
+    "HINDALCO", "GRASIM", "ADANIPORTS", "ADANIENT", "COALINDIA", "TATACONSUM", "DRREDDY", "CIPLA", "BAJAJ-AUTO",
+    "EICHERMOT", "DIVISLAB", "BRITANNIA", "HEROMOTOCO", "INDUSINDBK", "HDFCLIFE", "SBILIFE", "ZOMATO", "BHEL",
+    "SUZLON", "DLF", "HAL", "BEL"
 ]
 
-# 🔥 SMART AI FINDER (Auto-detects which AI model works for your API Key)
 def get_ai_prediction(prompt):
-    if not GEMINI_API_KEY: return "⚠️ AI Key missing in Render."
-    models_to_try = ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro', 'gemini-1.5-pro']
-    for m in models_to_try:
+    if not GEMINI_API_KEY: return "⚠️ Google API Key missing. Technicals running purely on math."
+    models = ['gemini-1.5-flash', 'gemini-1.0-pro', 'gemini-pro']
+    for m in models:
         try:
             model = genai.GenerativeModel(m)
             res = model.generate_content(prompt)
             if res and res.text: return res.text.replace("*", "")
-        except Exception:
-            continue
-    return "⚠️ AI Error: Check API Key limits or Region."
+        except Exception: continue
+    return "⚠️ Google AI Quota Exceeded. Please generate a new API key from a different Google account."
 
 @app.get("/api/swing-scanner")
 def run_swing_scanner():
-    if "scanner_data" in cache: return cache["scanner_data"]
-    try:
-        data = yf.download(TICKERS, period="5d", progress=False)
-        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-        closes = data['Close'] if 'Close' in data else data
-        
-        all_perf = []
-        for ticker in TICKERS:
-            if ticker in closes.columns:
-                series = closes[ticker].dropna()
-                if len(series) >= 2:
-                    pct = round(((series.iloc[-1] - series.iloc[-2]) / series.iloc[-2]) * 100, 2)
-                    all_perf.append({"Symbol": ticker.replace(".NS", ""), "Percent": pct, "Price": round(series.iloc[-1], 2)})
-
-        gainers = sorted([s for s in all_perf if s['Percent'] > 0], key=lambda x: x['Percent'], reverse=True)[:15]
-        losers = sorted([s for s in all_perf if s['Percent'] < 0], key=lambda x: x['Percent'])[:15]
-        
-        res = {"status": "success", "data": {"top_gainers": gainers, "top_losers": losers}}
-        cache["scanner_data"] = res
-        return res
-    except Exception as e: return {"status": "error", "message": str(e)}
+    # 🔥 INSTANT LOAD: No Yahoo Finance call here anymore!
+    return {"status": "success", "data": {"fno_stocks": TICKERS}}
 
 def safe_val(val):
     if pd.isna(val) or math.isnan(val) or val is None: return None
@@ -82,10 +61,10 @@ def analyze_stock(symbol: str, timeframe: str):
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         if isinstance(df_daily.columns, pd.MultiIndex): df_daily.columns = df_daily.columns.get_level_values(0)
         
-        df = df.dropna(subset=['Close']) # Flush bad data immediately
+        df = df.dropna(subset=['Close'])
         if df.empty: return {"status": "error", "message": f"Market Data unavailable for {symbol}."}
 
-        # PROPER PIVOT MATH
+        # PIVOTS
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         df_daily['P'] = (H + L + C) / 3
@@ -102,7 +81,7 @@ def analyze_stock(symbol: str, timeframe: str):
         for col in ['P', 'R1', 'S1', 'R2', 'S2']:
             df[col] = df['date_only'].map(pivots[col])
 
-        # ADVANCED INDICATORS
+        # INDICATORS
         df.ta.ema(length=9, append=True)
         df.ta.ema(length=21, append=True)
         df.ta.rsi(length=14, append=True)
@@ -125,7 +104,7 @@ def analyze_stock(symbol: str, timeframe: str):
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
         
-        # Fire AI prediction
+        # AI Logic
         prompt = f"Act as a pro intraday trader. Analyze {timeframe} chart for {symbol}. Price: ₹{latest_price}. RSI: {chart_data[-1]['rsi']}. Give a sharp 2-sentence momentum prediction."
         ai_commentary = get_ai_prediction(prompt)
 
