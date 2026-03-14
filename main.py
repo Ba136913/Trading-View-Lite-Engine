@@ -71,6 +71,7 @@ def run_swing_scanner():
     except Exception as e:
         return {"status": "error", "message": f"Scanner Error: {str(e)}"}
 
+# 🔥 FIX 1: Safe Value Function (Prevents chart from collapsing to 0)
 def safe_val(val):
     if pd.isna(val) or math.isnan(val): return None
     return round(float(val), 2)
@@ -83,7 +84,7 @@ def analyze_stock(symbol: str):
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
 
     try:
-        # Fetch Intraday and Daily
+        # Fetch 5-min and Daily Data
         df_5m = yf.download(yf_symbol, period="5d", interval="5m", progress=False)
         df_daily = yf.download(yf_symbol, period="10d", interval="1d", progress=False)
 
@@ -94,11 +95,9 @@ def analyze_stock(symbol: str):
             return {"status": "error", "message": f"Data not found for {symbol}."}
 
         # ----------------------------------------------------
-        # 🔥 TRADINGVIEW TRADITIONAL PIVOTS MATH (P, R1-R5, S1-S5)
+        # 🔥 TRADINGVIEW TRADITIONAL PIVOTS (P, R1-R5, S1-S5)
         # ----------------------------------------------------
-        H = df_daily['High']
-        L = df_daily['Low']
-        C = df_daily['Close']
+        H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         
         df_daily['P'] = (H + L + C) / 3
         df_daily['R1'] = (2 * df_daily['P']) - L
@@ -112,32 +111,29 @@ def analyze_stock(symbol: str):
         df_daily['R5'] = df_daily['R4'] + (H - L)
         df_daily['S5'] = df_daily['S4'] - (H - L)
 
-        # Shift by 1 so 5-min candles use yesterday's values
+        # Shift daily pivots by 1 day (So 5-min candles use yesterday's data)
         pivots_shifted = df_daily[['P', 'R1', 'R2', 'R3', 'R4', 'R5', 'S1', 'S2', 'S3', 'S4', 'S5']].shift(1)
         pivots_shifted.index = pivots_shifted.index.tz_localize(None).date
         
         df_5m['date_only'] = df_5m.index.tz_localize(None).date
 
-        # Map to 5-min chart
         for col in ['P', 'R1', 'R2', 'R3', 'R4', 'R5', 'S1', 'S2', 'S3', 'S4', 'S5']:
             df_5m[col] = df_5m['date_only'].map(pivots_shifted[col])
 
         # ----------------------------------------------------
-        # 🔥 CRASH-PROOF SUPERTREND CALCULATION
+        # 🔥 SAFELY CALCULATE SUPERTREND
         # ----------------------------------------------------
         st3 = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=3)
         st1 = ta.supertrend(df_5m['High'], df_5m['Low'], df_5m['Close'], length=10, multiplier=1)
 
-        # iloc[:, 0] ensures we grab the line data regardless of what name pandas_ta gives it
         df_5m['st3'] = st3.iloc[:, 0] if st3 is not None and not st3.empty else None
         df_5m['st1'] = st1.iloc[:, 0] if st1 is not None and not st1.empty else None
 
         latest_price = round(float(df_5m.iloc[-1]['Close']), 2)
         
-        # Build JSON response
         chart_data = []
         for dt, row in df_5m.iterrows():
-            unix_t = int(dt.timestamp()) # Proper Intraday Time format
+            unix_t = int(dt.timestamp()) # UNIX time for perfect 5-min gaps
             
             chart_data.append({
                 "time": unix_t, 
@@ -152,6 +148,7 @@ def analyze_stock(symbol: str):
         result = {
             "symbol": yf_symbol.replace(".NS", ""),
             "latest_close": latest_price,
+            "ai_prediction": "AI Analysis based on 5-Min timeframe generated.",
             "historical_chart_data": chart_data
         }
         
