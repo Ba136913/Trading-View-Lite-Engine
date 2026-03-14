@@ -21,32 +21,28 @@ if GROQ_API_KEY:
 else:
     groq_client = None
 
+# 🔥 ALL 185+ NSE F&O STOCKS (CRASH-PROOF)
 TICKERS = [
-    "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "LT", "SBIN", "BHARTIARTL", "BAJFINANCE",
-    "AXISBANK", "KOTAKBANK", "ASIANPAINT", "M&M", "MARUTI", "SUNPHARMA", "TATASTEEL", "TATAMOTORS", "NTPC",
-    "ULTRACEMCO", "POWERGRID", "TITAN", "BAJAJFINSV", "WIPRO", "HCLTECH", "NESTLEIND", "ONGC", "JSWSTEEL",
-    "HINDALCO", "GRASIM", "ADANIPORTS", "ADANIENT", "COALINDIA", "TATACONSUM", "DRREDDY", "CIPLA", "BAJAJ-AUTO",
-    "EICHERMOT", "DIVISLAB", "BRITANNIA", "HEROMOTOCO", "INDUSINDBK", "HDFCLIFE", "SBILIFE", "ZOMATO", "BHEL",
-    "SUZLON", "DLF", "HAL", "BEL"
+    "AARTIIND", "ABB", "ABBOTINDIA", "ABCAPITAL", "ABFRL", "ACC", "ADANIENT", "ADANIPORTS", "ALKEM", "AMBUJACEM",
+    "APOLLOHOSP", "APOLLOTYRE", "ASHOKLEY", "ASIANPAINT", "ASTRAL", "ATUL", "AUBANK", "AUROPHARMA", "AXISBANK", "BAJAJ-AUTO",
+    "BAJAJFINSV", "BAJFINANCE", "BALKRISIND", "BALRAMCHIN", "BANDHANBNK", "BANKBARODA", "BATAINDIA", "BEL", "BERGEPAINT", "BHARATFORG",
+    "BHARTIARTL", "BHEL", "BIOCON", "BOSCHLTD", "BPCL", "BRITANNIA", "BSOFT", "CANBK", "CANFINHOME", "CHAMBLFERT",
+    "CHOLAFIN", "CIPLA", "COALINDIA", "COFORGE", "COLPAL", "CONCOR", "COROMANDEL", "CROMPTON", "CUB", "CUMMINSIND",
+    "DABUR", "DALBHARAT", "DEEPAKNTR", "DIVISLAB", "DIXON", "DLF", "DRREDDY", "EICHERMOT", "ESCORTS", "EXIDEIND",
+    "FEDERALBNK", "GAIL", "GLENMARK", "GMRINFRA", "GNFC", "GODREJCP", "GODREJPROP", "GRANULES", "GRASIM", "GUJGASLTD",
+    "HAL", "HAVELLS", "HCLTECH", "HDFCAMC", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDCOPPER", "HINDPETRO",
+    "HINDUNILVR", "ICICIBANK", "ICICIGI", "ICICIPRULI", "IDEA", "IDFCFIRSTB", "IEX", "IGL", "INDHOTEL", "INDIACEM",
+    "INDIAMART", "INDIGO", "INDUSINDBK", "INFY", "IPCALAB", "IRCTC", "ITC", "JINDALSTEL", "JKCEMENT", "JSWSTEEL",
+    "JUBLFOOD", "KOTAKBANK", "LALPATHLAB", "LAURUSLABS", "LICHSGFIN", "LT", "LTIM", "LTTS", "LUPIN", "M&M",
+    "M&MFIN", "MANAPPURAM", "MARICO", "MARUTI", "MCX", "METROPOLIS", "MFSL", "MGL", "MOTHERSON", "MPHASIS",
+    "MRF", "MUTHOOTFIN", "NATIONALUM", "NAUKRI", "NAVINFLUOR", "NESTLEIND", "NMDC", "NTPC", "OBEROIRLTY", "OFSS",
+    "ONGC", "PAGEIND", "PEL", "PERSISTENT", "PETRONET", "PFC", "PIDILITIND", "PIIND", "PNB", "POLYCAB",
+    "POWERGRID", "PVRINOX", "RAMCOCEM", "RBLBANK", "RECLTD", "RELIANCE", "SAIL", "SBICARD", "SBILIFE", "SBIN",
+    "SHREECEM", "SIEMENS", "SRF", "SUNPHARMA", "SUNTV", "SYNGENE", "TATACHEM", "TATACOMM", "TATACONSUM", "TATAMOTORS",
+    "TATAPOWER", "TATASTEEL", "TCS", "TECHM", "TITAN", "TORNTPHARM", "TRENT", "TVSMOTOR", "UBL", "ULTRACEMCO",
+    "UPL", "VEDL", "VOLTAS", "WIPRO", "ZOMATO", "ZYDUSLIFE", "SUZLON", "PAYTM", "JIOFIN"
 ]
 
-def get_ai_prediction(prompt):
-    if not groq_client: return "⚠️ Groq API Key missing."
-    try:
-        chat = groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a pro hedge fund quant. Give sharp, concise, 2-sentence momentum predictions."},
-                {"role": "user", "content": prompt}
-            ],
-            model="llama-3.1-8b-instant",
-            temperature=0.5,
-            max_tokens=100,
-        )
-        return chat.choices[0].message.content.replace("*", "")
-    except Exception as e:
-        return f"⚠️ AI Error: {str(e)[:150]}..."
-
-# 🔥 NEW: Chat Input Model
 class ChatRequest(BaseModel):
     symbol: str
     timeframe: str
@@ -54,12 +50,11 @@ class ChatRequest(BaseModel):
     price: float
     rsi: float
 
-# 🔥 NEW: Live Chat Endpoint
 @app.post("/api/chat")
 def chat_with_ai(req: ChatRequest):
     if not groq_client: return {"status": "error", "message": "Groq API Key missing."}
     try:
-        system_prompt = f"You are a professional trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. The user will ask you questions about strategies, targets, or analysis. Answer sharply like a Wall Street trader. Keep it under 4 sentences."
+        system_prompt = f"You are a professional trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud strategies. Answer sharply like a Wall Street trader. Keep it under 4 sentences."
         
         chat = groq_client.chat.completions.create(
             messages=[
@@ -70,8 +65,7 @@ def chat_with_ai(req: ChatRequest):
             temperature=0.7,
             max_tokens=200,
         )
-        reply = chat.choices[0].message.content.replace("*", "")
-        return {"status": "success", "reply": reply}
+        return {"status": "success", "reply": chat.choices[0].message.content.replace("*", "")}
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
@@ -102,6 +96,9 @@ def analyze_stock(symbol: str, timeframe: str):
 
         df = df.dropna(subset=['Close'])
 
+        # ----------------------------------------------------
+        # 🔥 PIVOTS CALCULATION
+        # ----------------------------------------------------
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         df_daily['P'] = (H + L + C) / 3
@@ -117,13 +114,26 @@ def analyze_stock(symbol: str, timeframe: str):
         df['date_only'] = df.index.date
         for col in ['P', 'R1', 'S1', 'R2', 'S2']: df[col] = df['date_only'].map(pivots[col])
 
-        df.ta.ema(length=9, append=True)
-        df.ta.ema(length=21, append=True)
-        df.ta.rsi(length=14, append=True)
+        # ----------------------------------------------------
+        # 🔥 ADVANCED ICHIMOKU CLOUD MATH
+        # ----------------------------------------------------
+        df.ta.rsi(length=14, append=True) # Keeping RSI for AI context
         
-        st3 = ta.supertrend(df['High'], df['Low'], df['Close'], length=10, multiplier=3)
-        df['st3'] = st3.iloc[:, 0] if st3 is not None and not st3.empty else None
-        df['trend'] = st3.iloc[:, 1] if st3 is not None and not st3.empty else 1
+        high_9 = df['High'].rolling(9).max()
+        low_9 = df['Low'].rolling(9).min()
+        df['tenkan'] = (high_9 + low_9) / 2
+
+        high_26 = df['High'].rolling(26).max()
+        low_26 = df['Low'].rolling(26).min()
+        df['kijun'] = (high_26 + low_26) / 2
+
+        df['span_a'] = ((df['tenkan'] + df['kijun']) / 2).shift(26)
+
+        high_52 = df['High'].rolling(52).max()
+        low_52 = df['Low'].rolling(52).min()
+        df['span_b'] = ((high_52 + low_52) / 2).shift(26)
+
+        df['chikou'] = df['Close'].shift(-26)
 
         chart_data = []
         for dt, row in df.iterrows():
@@ -131,15 +141,29 @@ def analyze_stock(symbol: str, timeframe: str):
             chart_data.append({
                 "time": unix_t, "open": safe_val(row['Open']), "high": safe_val(row['High']),
                 "low": safe_val(row['Low']), "close": safe_val(row['Close']),
-                "st3": safe_val(row['st3']), "trend": safe_val(row['trend']),
                 "p": safe_val(row['P']), "r1": safe_val(row['R1']), "s1": safe_val(row['S1']),
-                "ema9": safe_val(row.get('EMA_9', 0)), "ema21": safe_val(row.get('EMA_21', 0)),
-                "rsi": safe_val(row.get('RSI_14', 50))
+                "rsi": safe_val(row.get('RSI_14', 50)),
+                "tenkan": safe_val(row['tenkan']), "kijun": safe_val(row['kijun']),
+                "span_a": safe_val(row['span_a']), "span_b": safe_val(row['span_b']), "chikou": safe_val(row['chikou'])
             })
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
-        prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Current Price: ₹{latest_price}. RSI is {chart_data[-1]['rsi']}. Tell me if it's bullish, bearish, or sideways and next immediate resistance/support."
-        ai_commentary = get_ai_prediction(prompt)
+        ai_commentary = "⚠️ AI Chat Active. Ask about the Ichimoku Cloud setup below."
+        if groq_client:
+            try:
+                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Mention Ichimoku signals if any. Tell me if it's bullish, bearish, or sideways."
+                chat = groq_client.chat.completions.create(
+                    messages=[
+                        {"role": "system", "content": "You are an expert in Ichimoku Cloud trading strategies. Keep answers short and sharp (2 sentences)."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    model="llama-3.1-8b-instant",
+                    temperature=0.5,
+                    max_tokens=100,
+                )
+                ai_commentary = chat.choices[0].message.content.replace("*", "")
+            except Exception as e:
+                ai_commentary = f"⚠️ AI Initial Error: {str(e)[:150]}"
 
         res = {"status": "success", "data": {"symbol": yf_symbol.replace(".NS", ""), "latest_close": latest_price, "ai_prediction": ai_commentary, "historical_chart_data": chart_data}}
         cache[cache_key] = res
