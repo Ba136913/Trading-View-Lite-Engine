@@ -53,11 +53,11 @@ class ChatRequest(BaseModel):
 def chat_with_ai(req: ChatRequest):
     if not groq_client: return {"status": "error", "message": "Groq API Key missing."}
     try:
-        # 🔥 FIX: Instructed Llama 3.1 to speak strictly in Hinglish like a desi pro trader
+        # 🔥 FIX: Sharp, direct, natural Hinglish prompts.
         if req.is_home:
-            system_prompt = "You are a Master Hedge Fund Quant and Trading Mentor from India. The user is asking general market questions or about trading strategies. Provide detailed, comprehensive, and insightful answers. IMPORTANT: You MUST strictly reply in HINGLISH (a natural mix of Hindi and English, written in the English alphabet). Use terms like 'bhai', 'market kaisa hai', 'support toot gaya', etc. Act like a friendly desi expert trader."
+            system_prompt = "You are a Hedge Fund Quant and Trading Mentor. Answer in natural Hinglish (Hindi written in English alphabet). Keep explanations medium-length, direct, and straight to the point without unnecessary fluff or exaggerated slang. Be professional."
         else:
-            system_prompt = f"You are a pro Indian trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud and Pivot Points. IMPORTANT: You MUST strictly reply in HINGLISH (a mix of Hindi and English written in the English alphabet). Talk like a desi stock market expert. Provide a DETAILED, in-depth technical analysis explaining your rationale step-by-step in Hinglish."
+            system_prompt = f"You are a trading assistant advising on {req.symbol} ({req.timeframe} chart). Price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud and Pivot Points. Reply in natural Hinglish. Give a direct, medium-length, and straight-to-the-point technical analysis. Explain directly without wasting time."
         
         chat = groq_client.chat.completions.create(
             messages=[
@@ -65,8 +65,8 @@ def chat_with_ai(req: ChatRequest):
                 {"role": "user", "content": req.message}
             ],
             model="llama-3.1-8b-instant",
-            temperature=0.7,
-            max_tokens=800,
+            temperature=0.5, # Lowered temperature for more logical, less creative/rambling answers
+            max_tokens=350,  # 🔥 FIX: Reduced from 800 to 350 for perfect medium-length answers
         )
         return {"status": "success", "reply": chat.choices[0].message.content.replace("*", "")}
     except Exception as e:
@@ -144,16 +144,16 @@ def analyze_stock(symbol: str, timeframe: str):
         ai_commentary = "⚠️ AI Chat Active. Ask about Pivots or Ichimoku Cloud."
         if groq_client:
             try:
-                # 🔥 FIX: Added Hinglish instruction to the initial chart analysis as well
-                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Provide a detailed, multi-sentence technical breakdown. IMPORTANT: Reply strictly in HINGLISH."
+                # 🔥 FIX: Initial analysis prompt also made sharp and medium length
+                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Provide a direct, medium-length technical breakdown. IMPORTANT: Reply strictly in natural Hinglish, straight to the point."
                 chat = groq_client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": "You are an expert Indian technical analyst. Provide highly detailed and thorough analysis. You MUST strictly reply in HINGLISH (Hindi written in English alphabet)."},
+                        {"role": "system", "content": "You are a technical analyst. Provide direct, medium-length analysis in natural Hinglish. No extra fluff."},
                         {"role": "user", "content": prompt}
                     ],
                     model="llama-3.1-8b-instant",
-                    temperature=0.6,
-                    max_tokens=600,
+                    temperature=0.5,
+                    max_tokens=250, # Slightly shorter for the initial load
                 )
                 ai_commentary = chat.choices[0].message.content.replace("*", "")
             except Exception as e:
