@@ -14,14 +14,12 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 cache = TTLCache(maxsize=500, ttl=300)
 
-# 🔥 GROQ LLAMA 3.1
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
 else:
     groq_client = None
 
-# 🔥 ALL 185+ NSE F&O STOCKS (CRASH-PROOF)
 TICKERS = [
     "AARTIIND", "ABB", "ABBOTINDIA", "ABCAPITAL", "ABFRL", "ACC", "ADANIENT", "ADANIPORTS", "ALKEM", "AMBUJACEM",
     "APOLLOHOSP", "APOLLOTYRE", "ASHOKLEY", "ASIANPAINT", "ASTRAL", "ATUL", "AUBANK", "AUROPHARMA", "AXISBANK", "BAJAJ-AUTO",
@@ -54,7 +52,7 @@ class ChatRequest(BaseModel):
 def chat_with_ai(req: ChatRequest):
     if not groq_client: return {"status": "error", "message": "Groq API Key missing."}
     try:
-        system_prompt = f"You are a professional trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud strategies. Answer sharply like a Wall Street trader. Keep it under 4 sentences."
+        system_prompt = f"You are a professional trading assistant advising on {req.symbol} ({req.timeframe} chart). Current price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud and Traditional Pivot Points. Answer sharply like a Wall Street trader. Keep it under 4 sentences."
         
         chat = groq_client.chat.completions.create(
             messages=[
@@ -97,27 +95,34 @@ def analyze_stock(symbol: str, timeframe: str):
         df = df.dropna(subset=['Close'])
 
         # ----------------------------------------------------
-        # 🔥 PIVOTS CALCULATION
+        # 🔥 TRADITIONAL PIVOTS (Accurate up to R5/S5)
         # ----------------------------------------------------
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
-        df_daily['P'] = (H + L + C) / 3
-        df_daily['R1'] = (2 * df_daily['P']) - L
-        df_daily['S1'] = (2 * df_daily['P']) - H
-        df_daily['R2'] = df_daily['P'] + (H - L)
-        df_daily['S2'] = df_daily['P'] - (H - L)
+        P_val = (H + L + C) / 3
+        R1 = (2 * P_val) - L
+        S1 = (2 * P_val) - H
+        R2 = P_val + (H - L)
+        S2 = P_val - (H - L)
+        R3 = R1 + (H - L)
+        S3 = S1 - (H - L)
+        R4 = R3 + (H - L)
+        S4 = S3 - (H - L)
+        R5 = R4 + (H - L)
+        S5 = S4 - (H - L)
 
-        pivots = df_daily[['P', 'R1', 'S1', 'R2', 'S2']].shift(1)
+        pivots = pd.DataFrame({'P': P_val, 'R1': R1, 'S1': S1, 'R2': R2, 'S2': S2, 'R3': R3, 'S3': S3, 'R4': R4, 'S4': S4, 'R5': R5, 'S5': S5}).shift(1)
         pivots.index = pivots.index.date
         
         df.index = df.index.tz_localize(None)
         df['date_only'] = df.index.date
-        for col in ['P', 'R1', 'S1', 'R2', 'S2']: df[col] = df['date_only'].map(pivots[col])
+        for col in ['P', 'R1', 'S1', 'R2', 'S2', 'R3', 'S3', 'R4', 'S4', 'R5', 'S5']: 
+            df[col] = df['date_only'].map(pivots[col])
 
         # ----------------------------------------------------
-        # 🔥 ADVANCED ICHIMOKU CLOUD MATH
+        # 🔥 ICHIMOKU CLOUD MATH
         # ----------------------------------------------------
-        df.ta.rsi(length=14, append=True) # Keeping RSI for AI context
+        df.ta.rsi(length=14, append=True)
         
         high_9 = df['High'].rolling(9).max()
         low_9 = df['Low'].rolling(9).min()
@@ -142,19 +147,21 @@ def analyze_stock(symbol: str, timeframe: str):
                 "time": unix_t, "open": safe_val(row['Open']), "high": safe_val(row['High']),
                 "low": safe_val(row['Low']), "close": safe_val(row['Close']),
                 "p": safe_val(row['P']), "r1": safe_val(row['R1']), "s1": safe_val(row['S1']),
+                "r2": safe_val(row['R2']), "s2": safe_val(row['S2']), "r3": safe_val(row['R3']), "s3": safe_val(row['S3']),
+                "r4": safe_val(row['R4']), "s4": safe_val(row['S4']), "r5": safe_val(row['R5']), "s5": safe_val(row['S5']),
                 "rsi": safe_val(row.get('RSI_14', 50)),
                 "tenkan": safe_val(row['tenkan']), "kijun": safe_val(row['kijun']),
                 "span_a": safe_val(row['span_a']), "span_b": safe_val(row['span_b']), "chikou": safe_val(row['chikou'])
             })
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
-        ai_commentary = "⚠️ AI Chat Active. Ask about the Ichimoku Cloud setup below."
+        ai_commentary = "⚠️ AI Chat Active. Ask about Pivots or Ichimoku Cloud."
         if groq_client:
             try:
-                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Mention Ichimoku signals if any. Tell me if it's bullish, bearish, or sideways."
+                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Tell me if it's bullish, bearish, or sideways."
                 chat = groq_client.chat.completions.create(
                     messages=[
-                        {"role": "system", "content": "You are an expert in Ichimoku Cloud trading strategies. Keep answers short and sharp (2 sentences)."},
+                        {"role": "system", "content": "You are an expert in technical analysis. Keep answers short and sharp (2 sentences)."},
                         {"role": "user", "content": prompt}
                     ],
                     model="llama-3.1-8b-instant",
