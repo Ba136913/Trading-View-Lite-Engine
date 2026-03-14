@@ -33,25 +33,32 @@ TICKERS = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "I
 
 @app.get("/api/swing-scanner")
 def run_swing_scanner():
+    if "scanner_data" in cache: return cache["scanner_data"]
     try:
         data = yf.download(TICKERS, period="5d", progress=False)
-        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
-        closes = data['Close'] if 'Close' in data else data
+        # 🔥 Yahan MultiIndex flatten nahi karna hai, warna Tickers ke naam gayab ho jate hain
+        closes = data['Close'] 
         
         all_performance = []
         for ticker in TICKERS:
             if ticker in closes.columns:
                 series = closes[ticker].dropna()
                 if len(series) >= 2:
-                    pct_change = round(((series.iloc[-1] - series.iloc[-2]) / series.iloc[-2]) * 100, 2)
-                    all_performance.append({"Symbol": ticker.replace(".NS", ""), "Percent": pct_change, "Price": round(series.iloc[-1], 2)})
+                    close_today = float(series.iloc[-1])
+                    close_yest = float(series.iloc[-2])
+                    if close_yest > 0:
+                        pct_change = round(((close_today - close_yest) / close_yest) * 100, 2)
+                        symbol_name = ticker.replace(".NS", "")
+                        all_performance.append({"Symbol": symbol_name, "Percent": pct_change, "Price": round(close_today, 2)})
 
         gainers = sorted([s for s in all_performance if s['Percent'] > 0], key=lambda x: x['Percent'], reverse=True)[:15]
         losers = sorted([s for s in all_performance if s['Percent'] < 0], key=lambda x: x['Percent'])[:15]
 
-        return {"status": "success", "data": {"top_gainers": gainers, "top_losers": losers}}
+        result = {"status": "success", "data": {"top_gainers": gainers, "top_losers": losers}}
+        cache["scanner_data"] = result
+        return result
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Scanner Error: {str(e)}"}
 
 def safe_val(val):
     if pd.isna(val) or math.isnan(val): return None
