@@ -13,14 +13,13 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 cache = TTLCache(maxsize=500, ttl=300)
 
-# 🔥 SHIFTED TO GROQ (LLAMA 3) - Ultra Fast & No Nuisance
+# 🔥 SHIFTED TO GROQ (LLAMA 3.1)
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 if GROQ_API_KEY:
     groq_client = Groq(api_key=GROQ_API_KEY)
 else:
     groq_client = None
 
-# 🔥 50 Ultra-Liquid F&O Stocks
 TICKERS = [
     "RELIANCE", "HDFCBANK", "ICICIBANK", "INFY", "TCS", "ITC", "LT", "SBIN", "BHARTIARTL", "BAJFINANCE",
     "AXISBANK", "KOTAKBANK", "ASIANPAINT", "M&M", "MARUTI", "SUNPHARMA", "TATASTEEL", "TATAMOTORS", "NTPC",
@@ -33,13 +32,13 @@ TICKERS = [
 def get_ai_prediction(prompt):
     if not groq_client: return "⚠️ Groq API Key is missing in Render Environment Variables."
     try:
-        # Meta's Llama 3 8B model for lightning-fast trading analysis
+        # 🔥 FIX: Updated to the newest active Groq model (Llama 3.1 8B Instant)
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a professional hedge fund quant. Give extremely sharp, concise, 2-sentence momentum predictions based on the provided technicals."},
                 {"role": "user", "content": prompt}
             ],
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",  # <--- YAHAN CHANGE KIYA HAI
             temperature=0.5,
             max_tokens=100,
         )
