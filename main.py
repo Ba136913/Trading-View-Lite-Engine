@@ -142,12 +142,28 @@ def analyze_stock(symbol: str, timeframe: str):
                 "s1": safe_val(row['S1']), "s2": safe_val(row['S2']), "s3": safe_val(row['S3']), "s4": safe_val(row['S4']), "s5": safe_val(row['S5'])
             })
 
-        ai_commentary = "⚠️ Add Gemini API Key in Render to activate AI."
+        # ----------------------------------------------------
+        # 🔥 SMART AI PREDICTION (WITH ERROR TRACKER)
+        # ----------------------------------------------------
+        ai_commentary = "⚠️ AI Model not initialized. Please check if GEMINI_API_KEY is saved in Render."
         if ai_model:
             try:
-                prompt = f"Act as a pro trader. Analyze {timeframe} chart for {symbol}. Price: ₹{latest_price}. Give a sharp 2-sentence momentum prediction."
-                ai_commentary = ai_model.generate_content(prompt).text.replace("*", "")
-            except: pass
+                prompt = f"Act as a pro intraday trader. Analyze {timeframe} chart for {symbol}. Current Price is ₹{latest_price}. Give a sharp, 2-sentence momentum prediction based on standard technicals."
+                response = ai_model.generate_content(prompt)
+                ai_commentary = response.text.replace("*", "")
+            except Exception as e:
+                # Ab error chhhipega nahi, screen par dikhega!
+                ai_commentary = f"⚠️ AI Engine Error: {str(e)}"
+
+        result = {
+            "status": "success",
+            "data": {
+                "symbol": yf_symbol.replace(".NS", ""),
+                "latest_close": latest_price,
+                "ai_prediction": ai_commentary,
+                "historical_chart_data": chart_data
+            }
+        }
 
         result = {
             "status": "success",
