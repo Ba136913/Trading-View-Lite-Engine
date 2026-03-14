@@ -3,19 +3,22 @@ from fastapi.middleware.cors import CORSMiddleware
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
-import google.generativeai as genai
+import os
+from groq import Groq
 from cachetools import TTLCache
 import uvicorn
-import os
 import math
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 cache = TTLCache(maxsize=500, ttl=300)
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+# 🔥 SHIFTED TO GROQ (LLAMA 3) - Ultra Fast & No Nuisance
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+if GROQ_API_KEY:
+    groq_client = Groq(api_key=GROQ_API_KEY)
+else:
+    groq_client = None
 
 # 🔥 50 Ultra-Liquid F&O Stocks
 TICKERS = [
@@ -27,23 +30,22 @@ TICKERS = [
     "SUZLON", "DLF", "HAL", "BEL"
 ]
 
-# 🔥 X-RAY AI FINDER (Will show EXACT reason why Google is rejecting)
 def get_ai_prediction(prompt):
-    if not GEMINI_API_KEY: return "⚠️ Google API Key is missing in Render Environment Variables."
+    if not groq_client: return "⚠️ Groq API Key is missing in Render Environment Variables."
     try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-        res = model.generate_content(prompt)
-        return res.text.replace("*", "")
+        # Using Meta's Llama 3 8B model for lightning-fast trading analysis
+        chat_completion = groq_client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": "You are a professional hedge fund quant. Give extremely sharp, concise, 2-sentence momentum predictions based on the provided technicals."},
+                {"role": "user", "content": prompt}
+            ],
+            model="llama3-8b-8192",
+            temperature=0.5,
+            max_tokens=100,
+        )
+        return chat_completion.choices[0].message.content.replace("*", "")
     except Exception as e:
-        err = str(e)
-        if "404" in err:
-            try:
-                # Fallback to older model if new one isn't supported
-                model2 = genai.GenerativeModel('gemini-pro')
-                return model2.generate_content(prompt).text.replace("*", "")
-            except Exception as e2:
-                return f"⚠️ Model Not Found. Update 'google-generativeai' in requirements.txt"
-        return f"⚠️ AI Blocked by Google. EXACT REASON: {err[:150]}..."
+        return f"⚠️ AI Engine Error: {str(e)[:150]}..."
 
 @app.get("/api/swing-scanner")
 def run_swing_scanner():
@@ -67,9 +69,8 @@ def analyze_stock(symbol: str, timeframe: str):
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         if isinstance(df_daily.columns, pd.MultiIndex): df_daily.columns = df_daily.columns.get_level_values(0)
         
-        # 🔥 ZOMATO FIX: Explicit error if Yahoo Finance blocks this specific ticker
         if df.empty or 'Close' not in df.columns or df['Close'].dropna().empty: 
-            return {"status": "error", "message": f"Market Data unavailable for {symbol}. Yahoo Finance might be blocking this specific ticker temporarily. Try a different Timeframe or try again in 10 mins."}
+            return {"status": "error", "message": f"Market Data unavailable for {symbol}. Yahoo Finance might be blocking this temporarily. Try again later."}
 
         df = df.dropna(subset=['Close'])
 
@@ -113,8 +114,8 @@ def analyze_stock(symbol: str, timeframe: str):
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
         
-        # AI Logic
-        prompt = f"Act as a pro intraday trader. Analyze {timeframe} chart for {symbol}. Price: ₹{latest_price}. RSI: {chart_data[-1]['rsi']}. Give a sharp 2-sentence momentum prediction."
+        # Groq AI Logic
+        prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Current Price: ₹{latest_price}. RSI is {chart_data[-1]['rsi']}. Tell me if it's bullish, bearish, or sideways and next immediate resistance/support."
         ai_commentary = get_ai_prediction(prompt)
 
         res = {"status": "success", "data": {"symbol": yf_symbol.replace(".NS", ""), "latest_close": latest_price, "ai_prediction": ai_commentary, "historical_chart_data": chart_data}}
