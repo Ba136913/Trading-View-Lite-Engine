@@ -9,7 +9,6 @@ import uvicorn
 import os
 import datetime
 import math
-import requests  # 🔥 NAYA IMPORT: Bypass ke liye
 
 app = FastAPI()
 
@@ -30,22 +29,15 @@ if GEMINI_API_KEY:
 else:
     ai_model = None
 
-# ----------------------------------------------------
-# 🔥 YAHOO FINANCE ANTI-BLOCK SYSTEM (Fake Browser)
-# ----------------------------------------------------
-yf_session = requests.Session()
-yf_session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-})
-
 TICKERS = ["RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "SBIN.NS", "INFY.NS", "TATAMOTORS.NS", "ZOMATO.NS", "BHEL.NS", "TATASTEEL.NS", "SUZLON.NS"]
 
 @app.get("/api/swing-scanner")
 def run_swing_scanner():
     if "scanner_data" in cache: return cache["scanner_data"]
     try:
-        # session=yf_session pass karke ban se bachenge
-        data = yf.download(TICKERS, period="5d", progress=False, session=yf_session)
+        # 🔥 FIX: Removed custom session, letting YF handle the bypass natively
+        data = yf.download(TICKERS, period="5d", progress=False)
+        if isinstance(data.columns, pd.MultiIndex): data.columns = data.columns.get_level_values(0)
         closes = data['Close'] if 'Close' in data else data
         
         all_performance = []
@@ -81,9 +73,9 @@ def analyze_stock(symbol: str, timeframe: str):
     if cache_key in cache: return {"status": "success", "data": cache[cache_key]}
 
     try:
-        # Dono Data me Session pass kiya hai
-        df = yf.download(yf_symbol, period=period, interval=timeframe, progress=False, session=yf_session)
-        df_daily = yf.download(yf_symbol, period="15d", interval="1d", progress=False, session=yf_session)
+        # 🔥 FIX: Removed custom session here as well
+        df = yf.download(yf_symbol, period=period, interval=timeframe, progress=False)
+        df_daily = yf.download(yf_symbol, period="15d", interval="1d", progress=False)
 
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
         if isinstance(df_daily.columns, pd.MultiIndex): df_daily.columns = df_daily.columns.get_level_values(0)
@@ -92,9 +84,7 @@ def analyze_stock(symbol: str, timeframe: str):
 
         df = df.ffill().bfill()
         
-        # ----------------------------------------------------
-        # 🔥 TRADITIONAL PIVOTS CALCULATION
-        # ----------------------------------------------------
+        # TRADITIONAL PIVOTS
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         df_daily['P'] = (H + L + C) / 3
         df_daily['R1'] = (2 * df_daily['P']) - L
@@ -115,9 +105,7 @@ def analyze_stock(symbol: str, timeframe: str):
         for col in ['P', 'R1', 'R2', 'R3', 'R4', 'R5', 'S1', 'S2', 'S3', 'S4', 'S5']:
             df[col] = df['date_only'].map(pivots_shifted[col])
 
-        # ----------------------------------------------------
-        # 🔥 SUPERTREND (10:3 and 10:1)
-        # ----------------------------------------------------
+        # SUPERTREND
         st3 = ta.supertrend(df['High'], df['Low'], df['Close'], length=10, multiplier=3)
         st1 = ta.supertrend(df['High'], df['Low'], df['Close'], length=10, multiplier=1)
 
@@ -142,9 +130,6 @@ def analyze_stock(symbol: str, timeframe: str):
                 "s1": safe_val(row['S1']), "s2": safe_val(row['S2']), "s3": safe_val(row['S3']), "s4": safe_val(row['S4']), "s5": safe_val(row['S5'])
             })
 
-        # ----------------------------------------------------
-        # 🔥 SMART AI PREDICTION (WITH ERROR TRACKER)
-        # ----------------------------------------------------
         ai_commentary = "⚠️ AI Model not initialized. Please check if GEMINI_API_KEY is saved in Render."
         if ai_model:
             try:
@@ -152,18 +137,7 @@ def analyze_stock(symbol: str, timeframe: str):
                 response = ai_model.generate_content(prompt)
                 ai_commentary = response.text.replace("*", "")
             except Exception as e:
-                # Ab error chhhipega nahi, screen par dikhega!
                 ai_commentary = f"⚠️ AI Engine Error: {str(e)}"
-
-        result = {
-            "status": "success",
-            "data": {
-                "symbol": yf_symbol.replace(".NS", ""),
-                "latest_close": latest_price,
-                "ai_prediction": ai_commentary,
-                "historical_chart_data": chart_data
-            }
-        }
 
         result = {
             "status": "success",
