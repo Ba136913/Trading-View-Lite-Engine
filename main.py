@@ -56,7 +56,6 @@ def chat_with_ai(req: ChatRequest):
         if req.is_home:
             system_prompt = "You are a Hedge Fund Quant and Trading Mentor. Answer in natural Hinglish (Hindi written in English alphabet). Keep explanations medium-length, direct, and straight to the point without unnecessary fluff or exaggerated slang. Be professional."
         else:
-            # 🔥 NEW: AI Ab Smart Money Concepts par focus karega
             system_prompt = f"You are a trading assistant advising on {req.symbol} ({req.timeframe} chart). Price is ₹{req.price}, RSI is {req.rsi}. You specialize in Smart Money Concepts (BOS, CHoCH, Liquidity), Ichimoku, and Pivots. Reply in natural Hinglish. Give a direct, medium-length, and straight-to-the-point technical analysis. Explain directly without wasting time."
         
         chat = groq_client.chat.completions.create(
@@ -101,7 +100,7 @@ def analyze_stock(symbol: str, timeframe: str):
         df = df.dropna(subset=['Close'])
 
         # ----------------------------------------------------
-        # 🔥 PIVOTS
+        # 🔥 PIVOTS (Traditional)
         # ----------------------------------------------------
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
@@ -119,22 +118,53 @@ def analyze_stock(symbol: str, timeframe: str):
         for col in ['P', 'R1', 'S1', 'R2', 'S2', 'R3', 'S3', 'R4', 'S4', 'R5', 'S5']: df[col] = df['date_only'].map(pivots[col])
 
         # ----------------------------------------------------
-        # 🔥 SMART MONEY CONCEPTS (SMC Core Logic)
+        # 🔥 EXACT LUXALGO SMART MONEY CONCEPTS (SMC) ENGINE
         # ----------------------------------------------------
-        window = 5 # Swing lookback period
-        # Identify exact Swing Highs and Lows (Peaks & Valleys)
-        df['max_roll'] = df['High'].rolling(window=2*window+1, center=True).max()
-        df['min_roll'] = df['Low'].rolling(window=2*window+1, center=True).min()
-        df['is_ph'] = df['High'] == df['max_roll']
-        df['is_pl'] = df['Low'] == df['min_roll']
+        left_bars = 5
+        right_bars = 5
         
-        # Carry forward the last known Swing High/Low
-        df['last_ph'] = df['High'].where(df['is_ph']).ffill()
-        df['last_pl'] = df['Low'].where(df['is_pl']).ffill()
+        # 1. Find Exact Fractal Pivots (Peaks and Valleys)
+        df['roll_max'] = df['High'].rolling(window=left_bars + right_bars + 1, center=True).max()
+        df['roll_min'] = df['Low'].rolling(window=left_bars + right_bars + 1, center=True).min()
+        df['is_PH'] = df['High'] == df['roll_max']
+        df['is_PL'] = df['Low'] == df['roll_min']
         
-        # BOS/CHoCH Trigger: Price breaks previous carried swing point
-        df['smc_bull'] = (df['Close'] > df['last_ph'].shift(1)) & (df['Close'].shift(1) <= df['last_ph'].shift(1))
-        df['smc_bear'] = (df['Close'] < df['last_pl'].shift(1)) & (df['Close'].shift(1) >= df['last_pl'].shift(1))
+        # 2. State Tracking Variables (Mimicking PineScript Logic)
+        active_ph = None
+        active_pl = None
+        ph_broken = True
+        pl_broken = True
+        
+        smc_bull = [0] * len(df)
+        smc_bear = [0] * len(df)
+        
+        highs = df['High'].values
+        lows = df['Low'].values
+        closes = df['Close'].values
+        is_ph = df['is_PH'].values
+        is_pl = df['is_PL'].values
+        
+        # 3. Bar-by-Bar Processing (Zero Lookahead, 100% Accuracy)
+        for i in range(right_bars, len(df)):
+            # Confirm pivot ONLY AFTER 'right_bars' have passed to avoid fake signals
+            if is_ph[i - right_bars]:
+                active_ph = highs[i - right_bars]
+                ph_broken = False
+            if is_pl[i - right_bars]:
+                active_pl = lows[i - right_bars]
+                pl_broken = False
+                
+            # Breakout Logic: Close crosses active confirmed pivot
+            if not ph_broken and active_ph is not None and closes[i] > active_ph:
+                smc_bull[i] = 1
+                ph_broken = True # Invalidate level until next Pivot High forms
+                
+            if not pl_broken and active_pl is not None and closes[i] < active_pl:
+                smc_bear[i] = -1
+                pl_broken = True # Invalidate level until next Pivot Low forms
+                
+        df['smc_bull'] = smc_bull
+        df['smc_bear'] = smc_bear
 
         # ----------------------------------------------------
         # 🔥 ICHIMOKU
@@ -150,16 +180,12 @@ def analyze_stock(symbol: str, timeframe: str):
         for dt, row in df.iterrows():
             unix_t = int(pd.Timestamp(dt).timestamp()) + (5.5 * 3600)
             
-            # Formatting boolean triggers for JS
-            smc_bull_val = 1 if row['smc_bull'] == True else 0
-            smc_bear_val = -1 if row['smc_bear'] == True else 0
-
             chart_data.append({
                 "time": unix_t, "open": safe_val(row['Open']), "high": safe_val(row['High']), "low": safe_val(row['Low']), "close": safe_val(row['Close']),
                 "p": safe_val(row['P']), "r1": safe_val(row['R1']), "s1": safe_val(row['S1']), "r2": safe_val(row['R2']), "s2": safe_val(row['S2']), "r3": safe_val(row['R3']), "s3": safe_val(row['S3']),
                 "r4": safe_val(row['R4']), "s4": safe_val(row['S4']), "r5": safe_val(row['R5']), "s5": safe_val(row['S5']),
                 "rsi": safe_val(row.get('RSI_14', 50)), "tenkan": safe_val(row['tenkan']), "kijun": safe_val(row['kijun']), "span_a": safe_val(row['span_a']), "span_b": safe_val(row['span_b']), "chikou": safe_val(row['chikou']),
-                "smc_bull": smc_bull_val, "smc_bear": smc_bear_val # New SMC values
+                "smc_bull": int(row['smc_bull']), "smc_bear": int(row['smc_bear'])
             })
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
