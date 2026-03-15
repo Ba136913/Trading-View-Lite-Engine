@@ -12,7 +12,6 @@ import uvicorn
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-# Cache increased for better stability
 cache = TTLCache(maxsize=1000, ttl=300)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
@@ -57,7 +56,8 @@ def chat_with_ai(req: ChatRequest):
         if req.is_home:
             system_prompt = "You are a Hedge Fund Quant and Trading Mentor. Answer in natural Hinglish (Hindi written in English alphabet). Keep explanations medium-length, direct, and straight to the point without unnecessary fluff or exaggerated slang. Be professional."
         else:
-            system_prompt = f"You are a trading assistant advising on {req.symbol} ({req.timeframe} chart). Price is ₹{req.price}, RSI is {req.rsi}. You specialize in Ichimoku Cloud and Pivot Points. Reply in natural Hinglish. Give a direct, medium-length, and straight-to-the-point technical analysis. Explain directly without wasting time."
+            # 🔥 NEW: AI Ab Smart Money Concepts par focus karega
+            system_prompt = f"You are a trading assistant advising on {req.symbol} ({req.timeframe} chart). Price is ₹{req.price}, RSI is {req.rsi}. You specialize in Smart Money Concepts (BOS, CHoCH, Liquidity), Ichimoku, and Pivots. Reply in natural Hinglish. Give a direct, medium-length, and straight-to-the-point technical analysis. Explain directly without wasting time."
         
         chat = groq_client.chat.completions.create(
             messages=[
@@ -76,7 +76,6 @@ def chat_with_ai(req: ChatRequest):
 def run_swing_scanner():
     return {"status": "success", "data": {"fno_stocks": TICKERS}}
 
-# 🔥 FIX: 100% Crash-Proof Number Cleaner
 def safe_val(val):
     if pd.isna(val) or val is None or np.isnan(val) or np.isinf(val): 
         return None
@@ -101,30 +100,45 @@ def analyze_stock(symbol: str, timeframe: str):
 
         df = df.dropna(subset=['Close'])
 
-        # PIVOTS
+        # ----------------------------------------------------
+        # 🔥 PIVOTS
+        # ----------------------------------------------------
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         P_val = (H + L + C) / 3
-        R1 = (2 * P_val) - L
-        S1 = (2 * P_val) - H
-        R2 = P_val + (H - L)
-        S2 = P_val - (H - L)
-        R3 = R1 + (H - L)
-        S3 = S1 - (H - L)
-        R4 = R3 + (H - L)
-        S4 = S3 - (H - L)
-        R5 = R4 + (H - L)
-        S5 = S4 - (H - L)
+        R1 = (2 * P_val) - L; S1 = (2 * P_val) - H
+        R2 = P_val + (H - L); S2 = P_val - (H - L)
+        R3 = R1 + (H - L); S3 = S1 - (H - L)
+        R4 = R3 + (H - L); S4 = S3 - (H - L)
+        R5 = R4 + (H - L); S5 = S4 - (H - L)
 
         pivots = pd.DataFrame({'P': P_val, 'R1': R1, 'S1': S1, 'R2': R2, 'S2': S2, 'R3': R3, 'S3': S3, 'R4': R4, 'S4': S4, 'R5': R5, 'S5': S5}).shift(1)
         pivots.index = pivots.index.date
-        
         df.index = df.index.tz_localize(None)
         df['date_only'] = df.index.date
-        for col in ['P', 'R1', 'S1', 'R2', 'S2', 'R3', 'S3', 'R4', 'S4', 'R5', 'S5']: 
-            df[col] = df['date_only'].map(pivots[col])
+        for col in ['P', 'R1', 'S1', 'R2', 'S2', 'R3', 'S3', 'R4', 'S4', 'R5', 'S5']: df[col] = df['date_only'].map(pivots[col])
 
-        # ICHIMOKU
+        # ----------------------------------------------------
+        # 🔥 SMART MONEY CONCEPTS (SMC Core Logic)
+        # ----------------------------------------------------
+        window = 5 # Swing lookback period
+        # Identify exact Swing Highs and Lows (Peaks & Valleys)
+        df['max_roll'] = df['High'].rolling(window=2*window+1, center=True).max()
+        df['min_roll'] = df['Low'].rolling(window=2*window+1, center=True).min()
+        df['is_ph'] = df['High'] == df['max_roll']
+        df['is_pl'] = df['Low'] == df['min_roll']
+        
+        # Carry forward the last known Swing High/Low
+        df['last_ph'] = df['High'].where(df['is_ph']).ffill()
+        df['last_pl'] = df['Low'].where(df['is_pl']).ffill()
+        
+        # BOS/CHoCH Trigger: Price breaks previous carried swing point
+        df['smc_bull'] = (df['Close'] > df['last_ph'].shift(1)) & (df['Close'].shift(1) <= df['last_ph'].shift(1))
+        df['smc_bear'] = (df['Close'] < df['last_pl'].shift(1)) & (df['Close'].shift(1) >= df['last_pl'].shift(1))
+
+        # ----------------------------------------------------
+        # 🔥 ICHIMOKU
+        # ----------------------------------------------------
         df.ta.rsi(length=14, append=True)
         high_9 = df['High'].rolling(9).max(); low_9 = df['Low'].rolling(9).min(); df['tenkan'] = (high_9 + low_9) / 2
         high_26 = df['High'].rolling(26).max(); low_26 = df['Low'].rolling(26).min(); df['kijun'] = (high_26 + low_26) / 2
@@ -135,18 +149,24 @@ def analyze_stock(symbol: str, timeframe: str):
         chart_data = []
         for dt, row in df.iterrows():
             unix_t = int(pd.Timestamp(dt).timestamp()) + (5.5 * 3600)
+            
+            # Formatting boolean triggers for JS
+            smc_bull_val = 1 if row['smc_bull'] == True else 0
+            smc_bear_val = -1 if row['smc_bear'] == True else 0
+
             chart_data.append({
                 "time": unix_t, "open": safe_val(row['Open']), "high": safe_val(row['High']), "low": safe_val(row['Low']), "close": safe_val(row['Close']),
                 "p": safe_val(row['P']), "r1": safe_val(row['R1']), "s1": safe_val(row['S1']), "r2": safe_val(row['R2']), "s2": safe_val(row['S2']), "r3": safe_val(row['R3']), "s3": safe_val(row['S3']),
                 "r4": safe_val(row['R4']), "s4": safe_val(row['S4']), "r5": safe_val(row['R5']), "s5": safe_val(row['S5']),
-                "rsi": safe_val(row.get('RSI_14', 50)), "tenkan": safe_val(row['tenkan']), "kijun": safe_val(row['kijun']), "span_a": safe_val(row['span_a']), "span_b": safe_val(row['span_b']), "chikou": safe_val(row['chikou'])
+                "rsi": safe_val(row.get('RSI_14', 50)), "tenkan": safe_val(row['tenkan']), "kijun": safe_val(row['kijun']), "span_a": safe_val(row['span_a']), "span_b": safe_val(row['span_b']), "chikou": safe_val(row['chikou']),
+                "smc_bull": smc_bull_val, "smc_bear": smc_bear_val # New SMC values
             })
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
         ai_commentary = "⚠️ AI Chat Active. Ask about Pivots or Ichimoku Cloud."
         if groq_client:
             try:
-                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Provide a direct, medium-length technical breakdown. IMPORTANT: Reply strictly in natural Hinglish, straight to the point."
+                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Provide a direct, medium-length technical breakdown combining Smart Money Concepts, Ichimoku, and Pivots. IMPORTANT: Reply strictly in natural Hinglish, straight to the point."
                 chat = groq_client.chat.completions.create(
                     messages=[
                         {"role": "system", "content": "You are a technical analyst. Provide direct, medium-length analysis in natural Hinglish. No extra fluff."},
@@ -165,4 +185,4 @@ def analyze_stock(symbol: str, timeframe: str):
         return res
     except Exception as e: return {"status": "error", "message": f"Server processing error. {str(e)[:50]}"}
 
-if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=10000)   
+if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=10000)
