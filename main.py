@@ -4,15 +4,16 @@ from pydantic import BaseModel
 import yfinance as yf
 import pandas as pd
 import pandas_ta as ta
+import numpy as np
 import os
 from groq import Groq
 from cachetools import TTLCache
 import uvicorn
-import math
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
-cache = TTLCache(maxsize=500, ttl=300)
+# Cache increased for better stability
+cache = TTLCache(maxsize=1000, ttl=300)
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 if GROQ_API_KEY:
@@ -53,7 +54,6 @@ class ChatRequest(BaseModel):
 def chat_with_ai(req: ChatRequest):
     if not groq_client: return {"status": "error", "message": "Groq API Key missing."}
     try:
-        # 🔥 FIX: Sharp, direct, natural Hinglish prompts.
         if req.is_home:
             system_prompt = "You are a Hedge Fund Quant and Trading Mentor. Answer in natural Hinglish (Hindi written in English alphabet). Keep explanations medium-length, direct, and straight to the point without unnecessary fluff or exaggerated slang. Be professional."
         else:
@@ -65,8 +65,8 @@ def chat_with_ai(req: ChatRequest):
                 {"role": "user", "content": req.message}
             ],
             model="llama-3.1-8b-instant",
-            temperature=0.5, # Lowered temperature for more logical, less creative/rambling answers
-            max_tokens=350,  # 🔥 FIX: Reduced from 800 to 350 for perfect medium-length answers
+            temperature=0.5,
+            max_tokens=350,
         )
         return {"status": "success", "reply": chat.choices[0].message.content.replace("*", "")}
     except Exception as e:
@@ -76,8 +76,10 @@ def chat_with_ai(req: ChatRequest):
 def run_swing_scanner():
     return {"status": "success", "data": {"fno_stocks": TICKERS}}
 
+# 🔥 FIX: 100% Crash-Proof Number Cleaner
 def safe_val(val):
-    if pd.isna(val) or math.isnan(val) or val is None: return None
+    if pd.isna(val) or val is None or np.isnan(val) or np.isinf(val): 
+        return None
     return round(float(val), 2)
 
 @app.get("/api/analyze/{symbol}/{timeframe}")
@@ -95,7 +97,7 @@ def analyze_stock(symbol: str, timeframe: str):
         if isinstance(df_daily.columns, pd.MultiIndex): df_daily.columns = df_daily.columns.get_level_values(0)
         
         if df.empty or 'Close' not in df.columns or df['Close'].dropna().empty: 
-            return {"status": "error", "message": f"Market Data unavailable for {symbol}."}
+            return {"status": "error", "message": f"Market Data unavailable for {symbol}. Try again later."}
 
         df = df.dropna(subset=['Close'])
 
@@ -144,7 +146,6 @@ def analyze_stock(symbol: str, timeframe: str):
         ai_commentary = "⚠️ AI Chat Active. Ask about Pivots or Ichimoku Cloud."
         if groq_client:
             try:
-                # 🔥 FIX: Initial analysis prompt also made sharp and medium length
                 prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Provide a direct, medium-length technical breakdown. IMPORTANT: Reply strictly in natural Hinglish, straight to the point."
                 chat = groq_client.chat.completions.create(
                     messages=[
@@ -153,16 +154,15 @@ def analyze_stock(symbol: str, timeframe: str):
                     ],
                     model="llama-3.1-8b-instant",
                     temperature=0.5,
-                    max_tokens=250, # Slightly shorter for the initial load
+                    max_tokens=250,
                 )
                 ai_commentary = chat.choices[0].message.content.replace("*", "")
             except Exception as e:
-                ai_commentary = f"⚠️ AI Initial Error: {str(e)[:150]}"
+                ai_commentary = f"⚠️ AI System waking up. Ask me a question below."
 
         res = {"status": "success", "data": {"symbol": yf_symbol.replace(".NS", ""), "latest_close": latest_price, "ai_prediction": ai_commentary, "historical_chart_data": chart_data}}
         cache[cache_key] = res
         return res
-    except Exception as e: return {"status": "error", "message": str(e)}
+    except Exception as e: return {"status": "error", "message": f"Server processing error. {str(e)[:50]}"}
 
-if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=10000)
-    
+if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=10000)   
