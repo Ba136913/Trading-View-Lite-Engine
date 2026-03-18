@@ -54,9 +54,9 @@ def chat_with_ai(req: ChatRequest):
     if not groq_client: return {"status": "error", "message": "Groq API Key missing."}
     try:
         if req.is_home:
-            system_prompt = "You are a Hedge Fund Quant and Trading Mentor. Answer in natural Hinglish (Hindi written in English alphabet). Keep explanations medium-length, direct, and straight to the point without unnecessary fluff or exaggerated slang. Be professional."
+            system_prompt = "You are a Hedge Fund Quant and Trading Mentor. Answer in natural Hinglish. Keep explanations medium-length, direct, and straight to the point."
         else:
-            system_prompt = f"You are a trading assistant advising on {req.symbol} ({req.timeframe} chart). Price is ₹{req.price}, RSI is {req.rsi}. You specialize in Smart Money Concepts (BOS, CHoCH, Liquidity), Ichimoku, and Pivots. Reply in natural Hinglish. Give a direct, medium-length, and straight-to-the-point technical analysis. Explain directly without wasting time."
+            system_prompt = f"You are a trading assistant advising on {req.symbol} ({req.timeframe} chart). Price is ₹{req.price}. You specialize in MTF Confluence, Smart Money Concepts, and Pivots. Reply in natural Hinglish. Give a direct, medium-length technical analysis. Explain directly without wasting time."
         
         chat = groq_client.chat.completions.create(
             messages=[
@@ -76,9 +76,42 @@ def run_swing_scanner():
     return {"status": "success", "data": {"fno_stocks": TICKERS}}
 
 def safe_val(val):
-    if pd.isna(val) or val is None or np.isnan(val) or np.isinf(val): 
-        return None
+    if pd.isna(val) or val is None or np.isnan(val) or np.isinf(val): return None
     return round(float(val), 2)
+
+# 🔥 NEW: MULTI-TIMEFRAME CONFLUENCE SCANNER
+@app.get("/api/mtf/{symbol}")
+def mtf_analysis(symbol: str):
+    yf_symbol = symbol.upper().replace(".NS", "") + ".NS"
+    tfs = {"5m": "5d", "15m": "5d", "60m": "1mo"}
+    results = {}
+    try:
+        for tf, period in tfs.items():
+            df = yf.download(yf_symbol, period=period, interval=tf, progress=False)
+            if df.empty: continue
+            if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.get_level_values(0)
+            df = df.dropna(subset=['Close']).copy()
+            
+            if len(df) < 50: continue
+                
+            close = float(df['Close'].iloc[-1])
+            sma50 = float(df['Close'].rolling(50).mean().iloc[-1])
+            df.ta.rsi(length=14, append=True)
+            rsi = float(df['RSI_14'].iloc[-1]) if 'RSI_14' in df.columns else 50.0
+            
+            # Pro Logic for Confluence
+            if close > sma50 and rsi > 55:
+                trend = "🟢 Bullish"
+            elif close < sma50 and rsi < 45:
+                trend = "🔴 Bearish"
+            else:
+                trend = "🟡 Neutral/Sideways"
+                
+            results[tf] = {"close": round(close, 2), "trend": trend, "rsi": round(rsi, 2)}
+            
+        return {"status": "success", "data": results}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
 
 @app.get("/api/analyze/{symbol}/{timeframe}")
 def analyze_stock(symbol: str, timeframe: str):
@@ -97,11 +130,9 @@ def analyze_stock(symbol: str, timeframe: str):
         if df.empty or 'Close' not in df.columns or df['Close'].dropna().empty: 
             return {"status": "error", "message": f"Market Data unavailable for {symbol}. Try again later."}
 
-        df = df.dropna(subset=['Close'])
+        df = df.dropna(subset=['Close']).copy()
 
-        # ----------------------------------------------------
-        # 🔥 PIVOTS (Traditional)
-        # ----------------------------------------------------
+        # PIVOTS
         df_daily.index = df_daily.index.tz_localize(None)
         H, L, C = df_daily['High'], df_daily['Low'], df_daily['Close']
         P_val = (H + L + C) / 3
@@ -117,58 +148,17 @@ def analyze_stock(symbol: str, timeframe: str):
         df['date_only'] = df.index.date
         for col in ['P', 'R1', 'S1', 'R2', 'S2', 'R3', 'S3', 'R4', 'S4', 'R5', 'S5']: df[col] = df['date_only'].map(pivots[col])
 
-        # ----------------------------------------------------
-        # 🔥 EXACT LUXALGO SMART MONEY CONCEPTS (SMC) ENGINE
-        # ----------------------------------------------------
-        left_bars = 5
-        right_bars = 5
-        
-        # 1. Find Exact Fractal Pivots (Peaks and Valleys)
-        df['roll_max'] = df['High'].rolling(window=left_bars + right_bars + 1, center=True).max()
-        df['roll_min'] = df['Low'].rolling(window=left_bars + right_bars + 1, center=True).min()
-        df['is_PH'] = df['High'] == df['roll_max']
-        df['is_PL'] = df['Low'] == df['roll_min']
-        
-        # 2. State Tracking Variables (Mimicking PineScript Logic)
-        active_ph = None
-        active_pl = None
-        ph_broken = True
-        pl_broken = True
-        
-        smc_bull = [0] * len(df)
-        smc_bear = [0] * len(df)
-        
-        highs = df['High'].values
-        lows = df['Low'].values
-        closes = df['Close'].values
-        is_ph = df['is_PH'].values
-        is_pl = df['is_PL'].values
-        
-        # 3. Bar-by-Bar Processing (Zero Lookahead, 100% Accuracy)
-        for i in range(right_bars, len(df)):
-            # Confirm pivot ONLY AFTER 'right_bars' have passed to avoid fake signals
-            if is_ph[i - right_bars]:
-                active_ph = highs[i - right_bars]
-                ph_broken = False
-            if is_pl[i - right_bars]:
-                active_pl = lows[i - right_bars]
-                pl_broken = False
-                
-            # Breakout Logic: Close crosses active confirmed pivot
-            if not ph_broken and active_ph is not None and closes[i] > active_ph:
-                smc_bull[i] = 1
-                ph_broken = True # Invalidate level until next Pivot High forms
-                
-            if not pl_broken and active_pl is not None and closes[i] < active_pl:
-                smc_bear[i] = -1
-                pl_broken = True # Invalidate level until next Pivot Low forms
-                
-        df['smc_bull'] = smc_bull
-        df['smc_bear'] = smc_bear
+        # EXACT LUXALGO SMC ENGINE 
+        df['roll_max'] = df['High'].rolling(window=11, center=True).max()
+        df['roll_min'] = df['Low'].rolling(window=11, center=True).min()
+        df['SwingHigh'] = np.where(df['High'] == df['roll_max'], df['High'], np.nan)
+        df['SwingLow'] = np.where(df['Low'] == df['roll_min'], df['Low'], np.nan)
+        df['LastSwingHigh'] = df['SwingHigh'].ffill()
+        df['LastSwingLow'] = df['SwingLow'].ffill()
+        df['smc_bull'] = np.where((df['Close'] > df['LastSwingHigh']) & (df['Close'].shift(1) <= df['LastSwingHigh']), 1, 0)
+        df['smc_bear'] = np.where((df['Close'] < df['LastSwingLow']) & (df['Close'].shift(1) >= df['LastSwingLow']), -1, 0)
 
-        # ----------------------------------------------------
-        # 🔥 ICHIMOKU
-        # ----------------------------------------------------
+        # ICHIMOKU
         df.ta.rsi(length=14, append=True)
         high_9 = df['High'].rolling(9).max(); low_9 = df['Low'].rolling(9).min(); df['tenkan'] = (high_9 + low_9) / 2
         high_26 = df['High'].rolling(26).max(); low_26 = df['Low'].rolling(26).min(); df['kijun'] = (high_26 + low_26) / 2
@@ -179,7 +169,6 @@ def analyze_stock(symbol: str, timeframe: str):
         chart_data = []
         for dt, row in df.iterrows():
             unix_t = int(pd.Timestamp(dt).timestamp()) + (5.5 * 3600)
-            
             chart_data.append({
                 "time": unix_t, "open": safe_val(row['Open']), "high": safe_val(row['High']), "low": safe_val(row['Low']), "close": safe_val(row['Close']),
                 "p": safe_val(row['P']), "r1": safe_val(row['R1']), "s1": safe_val(row['S1']), "r2": safe_val(row['R2']), "s2": safe_val(row['S2']), "r3": safe_val(row['R3']), "s3": safe_val(row['S3']),
@@ -189,26 +178,11 @@ def analyze_stock(symbol: str, timeframe: str):
             })
 
         latest_price = round(float(df.iloc[-1]['Close']), 2)
-        ai_commentary = "⚠️ AI Chat Active. Ask about Pivots or Ichimoku Cloud."
-        if groq_client:
-            try:
-                prompt = f"Analyze {timeframe} chart for {symbol} on NSE. Price: ₹{latest_price}. Provide a direct, medium-length technical breakdown combining Smart Money Concepts, Ichimoku, and Pivots. IMPORTANT: Reply strictly in natural Hinglish, straight to the point."
-                chat = groq_client.chat.completions.create(
-                    messages=[
-                        {"role": "system", "content": "You are a technical analyst. Provide direct, medium-length analysis in natural Hinglish. No extra fluff."},
-                        {"role": "user", "content": prompt}
-                    ],
-                    model="llama-3.1-8b-instant",
-                    temperature=0.5,
-                    max_tokens=250,
-                )
-                ai_commentary = chat.choices[0].message.content.replace("*", "")
-            except Exception as e:
-                ai_commentary = f"⚠️ AI System waking up. Ask me a question below."
-
+        ai_commentary = "⚠️ AI Chat Active. Try the new MTF Confluence Scan!"
+        
         res = {"status": "success", "data": {"symbol": yf_symbol.replace(".NS", ""), "latest_close": latest_price, "ai_prediction": ai_commentary, "historical_chart_data": chart_data}}
         cache[cache_key] = res
         return res
-    except Exception as e: return {"status": "error", "message": f"Server processing error. {str(e)[:50]}"}
+    except Exception as e: return {"status": "error", "message": f"Server error: {str(e)[:50]}"}
 
 if __name__ == "__main__": uvicorn.run(app, host="0.0.0.0", port=10000)
